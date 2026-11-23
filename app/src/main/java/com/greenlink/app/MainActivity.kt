@@ -426,7 +426,7 @@ private fun ConversationScreen(
         }.toTypedArray()
     }
     val nearbyTransport = remember(storageKey, currentUser) {
-        NearbyTransport(context, currentUser, expectedPeerNames,
+        NearbyTransport(context, currentUser, storageKey, expectedPeerNames,
             isMuted = { mutedState },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
