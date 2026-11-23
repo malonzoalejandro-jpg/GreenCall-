@@ -50,4 +50,16 @@ object GreenCallApi {
 
     fun getFriends(token: String): JSONArray =
         request("GET", "/v1/friends", token).optJSONArray("friends") ?: JSONArray()
+    fun createDirect(token: String, userId: String): String =
+        request("POST", "/v1/conversations/direct", token, JSONObject().put("userId", userId))
+            .getString("conversationId")
+
+    fun getMessages(token: String, conversationId: String): JSONArray =
+        request("GET", "/v1/conversations/$conversationId/messages", token)
+            .optJSONArray("messages") ?: JSONArray()
+
+    fun sendMessage(token: String, conversationId: String, body: String): JSONObject =
+        request("POST", "/v1/conversations/$conversationId/messages", token,
+            JSONObject().put("body", body)).getJSONObject("message")
+
 }
