@@ -54,6 +54,9 @@ object GreenCallApi {
         request("POST", "/v1/conversations/direct", token, JSONObject().put("userId", userId))
             .getString("conversationId")
 
+    fun addGroupMember(token: String, conversationId: String, userId: String) =
+        request("POST", "/v1/groups/$conversationId/members", token, JSONObject().put("userId", userId))
+
     fun getConversations(token: String): JSONArray =
         request("GET", "/v1/conversations", token).optJSONArray("conversations") ?: JSONArray()
 
