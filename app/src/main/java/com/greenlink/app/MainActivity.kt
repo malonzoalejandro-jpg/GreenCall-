@@ -507,8 +507,10 @@ private fun ConversationScreen(
             Text(voiceStatus, color = if (receivingVoice) Forest else Muted, fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
             if (muted) {
-                Text("Walkie-talkie is muted. Incoming voice will be saved as voicemail.", color = Muted, fontSize = 11.sp)
-            } else if (!micGranted) {
+                Text("Incoming live voice is muted and will be saved as voicemail. You can still talk.", color = Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(5.dp))
+            }
+            if (!micGranted) {
                 Button(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }, enabled = conversationId.isNotBlank()) {
                     Icon(Icons.Default.Mic, null); Spacer(Modifier.width(6.dp)); Text("Enable microphone")
                 }
