@@ -886,6 +886,68 @@ private fun ConversationScreen(
         Text("Hold to talk: nearby radio when connected, otherwise internet voice. Muted nearby voice is saved on this device.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
     }
 
+    if (showAddMember) {
+        val candidates = friends.filter { it != currentUser && it !in nearbyPeers }
+        AlertDialog(
+            onDismissRequest = { if (!addingMember) showAddMember = false },
+            title = { Text("Add someone to $title") },
+            text = {
+                Column {
+                    Text("Choose one of your friends to add to this group.", color = Muted, fontSize = 12.sp)
+                    if (candidates.isEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("All your friends are already in this group.", color = Muted, fontSize = 12.sp)
+                    } else {
+                        LazyColumn(Modifier.heightIn(max = 280.dp)) {
+                            items(candidates) { handle ->
+                                val display = prefs.getString("display_${currentUser}_${handle}", handle) ?: handle
+                                TextButton(
+                                    onClick = {
+                                        val memberId = prefs.getString("friend_id_${currentUser}_${handle}", "") ?: ""
+                                        if (memberId.isBlank()) {
+                                            memberError = "This friend is not linked to a server account."
+                                        } else {
+                                            scope.launch {
+                                                addingMember = true
+                                                memberError = ""
+                                                try {
+                                                    withContext(Dispatchers.IO) {
+                                                        GreenCallApi.addGroupMember(token, conversationId, memberId)
+                                                    }
+                                                    val updatedPeers = nearbyPeers + handle
+                                                    nearbyPeers = updatedPeers
+                                                    val peerArray = JSONArray()
+                                                    updatedPeers.forEach { peerArray.put(it) }
+                                                    prefs.edit().putString("group_nearby_peers_${currentUser}_${title}", peerArray.toString()).apply()
+                                                    showAddMember = false
+                                                } catch (error: Exception) {
+                                                    memberError = error.message ?: "Could not add this friend."
+                                                } finally {
+                                                    addingMember = false
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = !addingMember,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(Modifier.fillMaxWidth()) {
+                                        Text(display, color = Ink, fontWeight = FontWeight.SemiBold)
+                                        Text("@$handle", color = Muted, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (memberError.isNotBlank()) Text(memberError, color = Color(0xFFB33A2B), fontSize = 11.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAddMember = false }, enabled = !addingMember) { Text("Done") }
+            }
+        )
+    }
+
     if (showVoicemails) {
         AlertDialog(
             onDismissRequest = { showVoicemails = false },
