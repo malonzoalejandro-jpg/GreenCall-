@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Forest = Color(0xFF123D2B)
 private val Leaf = Color(0xFF35C982)
@@ -52,6 +55,8 @@ private fun parseArray(raw: String): List<String> = runCatching {
 @Composable
 private fun GreenCallApp(prefs: android.content.SharedPreferences) {
     var account by remember { mutableStateOf(prefs.getString("session", "") ?: "") }
+    var token by remember { mutableStateOf(prefs.getString("token", "") ?: "") }
+    val scope = rememberCoroutineScope()
     var authPage by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf("") }
     var tab by remember { mutableIntStateOf(0) }
@@ -74,26 +79,50 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
     }
 
     LaunchedEffect(account) { if (account.isNotBlank()) loadUserData(account) }
+    LaunchedEffect(account, token) {
+        if (account.isNotBlank() && token.isNotBlank()) {
+            runCatching {
+                val remote = withContext(Dispatchers.IO) { GreenCallApi.getFriends(token) }
+                val names = mutableListOf<String>()
+                val edit = prefs.edit()
+                for (i in 0 until remote.length()) {
+                    val friend = remote.getJSONObject(i)
+                    val username = friend.optString("username")
+                    if (username.isNotBlank()) {
+                        names.add(username)
+                        edit.putString("display_${account}_${username}", friend.optString("displayName"))
+                        edit.putString("friend_id_${account}_${username}", friend.optString("id"))
+                    }
+                }
+                edit.putString("friends_${account}", JSONArray(names.distinct()).toString()).apply()
+                friends = names.distinct()
+            }
+        }
+    }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Forest, secondary = Leaf, background = Bg)) {
         if (account.isBlank()) {
             AuthScreen(authPage, authError, { authError = "" }, { name, handle, password, register ->
                 val cleanHandle = handle.trim().removePrefix("@").lowercase()
-                val cleanName = name.trim()
-                val db = runCatching { JSONObject(prefs.getString("accounts", "{}") ?: "{}") }.getOrElse { JSONObject() }
-                when {
-                    cleanHandle.length < 3 || !cleanHandle.matches(Regex("[a-z0-9_]+")) ->
-                        authError = "Username must be 3+ characters (letters, numbers, underscores)."
-                    password.length < 8 -> authError = "Password must be at least 8 characters."
-                    register && cleanName.length < 2 -> authError = "Enter your real display name."
-                    register && db.has(cleanHandle) -> authError = "That username is already taken."
-                    !register && (!db.has(cleanHandle) || db.optJSONObject(cleanHandle)?.optString("password") != digest(password)) ->
-                        authError = "Username or password is incorrect."
-                    else -> {
-                        if (register) db.put(cleanHandle, JSONObject().put("name", cleanName).put("password", digest(password)))
-                        prefs.edit().putString("accounts", db.toString()).putString("session", cleanHandle).apply()
-                        account = cleanHandle
-                        authError = ""
+                scope.launch {
+                    authError = ""
+                    try {
+                        val response = withContext(Dispatchers.IO) {
+                            if (register) GreenCallApi.register(name.trim(), cleanHandle, password)
+                            else GreenCallApi.login(cleanHandle, password)
+                        }
+                        val user = response.getJSONObject("user")
+                        val newToken = response.getString("token")
+                        val username = user.getString("username")
+                        prefs.edit()
+                            .putString("session", username)
+                            .putString("token", newToken)
+                            .putString("display_name", user.optString("displayName"))
+                            .apply()
+                        token = newToken
+                        account = username
+                    } catch (error: Exception) {
+                        authError = error.message ?: "Unable to connect to GreenCall."
                     }
                 }
             }, { authPage = it })
@@ -119,9 +148,10 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 when (tab) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
                     1 -> GroupsScreen(groups, friends, account, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
-                    2 -> FriendsScreen(friends, account, prefs, ::saveFriends, pad)
+                    2 -> FriendsScreen(friends, account, token, prefs, ::saveFriends, pad)
                     else -> SettingsScreen(account, muted, { muted = it }, {
-                        prefs.edit().remove("session").apply()
+                        prefs.edit().remove("session").remove("token").apply()
+                        token = ""
                         account = ""; selected = ""; tab = 0
                     }, pad)
                 }
@@ -212,24 +242,21 @@ private fun accountDirectory(prefs: android.content.SharedPreferences) =
     runCatching { JSONObject(prefs.getString("accounts", "{}") ?: "{}") }.getOrElse { JSONObject() }
 
 @Composable
-private fun FriendsScreen(friends: List<String>, currentUser: String, prefs: android.content.SharedPreferences,
+private fun FriendsScreen(friends: List<String>, currentUser: String, token: String, prefs: android.content.SharedPreferences,
                           save: (List<String>) -> Unit, pad: PaddingValues) {
     var show by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("") }
-    val directory = accountDirectory(prefs)
-    val matches = (0 until directory.length()).mapNotNull { i ->
-        val key = directory.names()?.optString(i) ?: return@mapNotNull null
-        val profile = directory.optJSONObject(key) ?: return@mapNotNull null
-        Triple(key, profile.optString("name"), profile.optString("name").contains(search.trim(), true))
-    }.filter { search.isNotBlank() && it.third && it.first !in friends && it.first != currentUser }
+    var results by remember { mutableStateOf(emptyList<JSONObject>()) }
+    var searching by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(pad)) {
         Header("Friends", "Find people by their display name.")
         if (friends.isEmpty()) EmptyState(Icons.Default.PersonSearch, "No friends added", "Tap Add friend and search their name.")
         else LazyColumn(Modifier.weight(1f)) {
             items(friends) { handle ->
-                val display = directory.optJSONObject(handle)?.optString("name")?.takeIf { it.isNotBlank() } ?: handle
-                Row(Modifier.fillMaxWidth().clickable { }.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                val display = prefs.getString("display_${currentUser}_${handle}", handle) ?: handle
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(display); Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
                     Icon(Icons.Default.CheckCircle, null, tint = Leaf)
@@ -239,29 +266,55 @@ private fun FriendsScreen(friends: List<String>, currentUser: String, prefs: and
         }
         Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.PersonAdd, null); Text("Add friend") }
     }
-    if (show) AlertDialog(onDismissRequest = { show = false; search = ""; result = "" },
+    if (show) AlertDialog(onDismissRequest = { show = false; search = ""; result = ""; results = emptyList() },
         title = { Text("Find a friend") },
         text = {
             Column {
                 Text("Search using the name they registered with, not their @username.", color = Muted, fontSize = 12.sp)
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(search, { search = it; result = "" }, Modifier.fillMaxWidth(), label = { Text("Person's name") }, singleLine = true)
-                if (matches.isNotEmpty()) matches.forEach { (handle, display, _) ->
+                OutlinedTextField(search, { search = it; result = ""; results = emptyList() }, Modifier.fillMaxWidth(), label = { Text("Person's name") }, singleLine = true)
+                Button(onClick = {
+                    if (search.trim().length >= 2 && token.isNotBlank()) scope.launch {
+                        searching = true
+                        try {
+                            val found = withContext(Dispatchers.IO) { GreenCallApi.searchUsers(token, search.trim()) }
+                            results = (0 until found.length()).map { found.getJSONObject(it) }
+                        } catch (error: Exception) {
+                            result = error.message ?: "Search failed."
+                        } finally { searching = false }
+                    }
+                }, enabled = !searching && search.trim().length >= 2) {
+                    if (searching) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("Search")
+                }
+                results.filter { it.optString("username") !in friends }.forEach { person ->
+                    val id = person.optString("id")
+                    val handle = person.optString("username")
+                    val display = person.optString("displayName")
                     Row(Modifier.fillMaxWidth().clickable {
-                        save(friends + handle); result = "$display added to your friends."; search = ""
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { GreenCallApi.addFriend(token, id) }
+                                prefs.edit()
+                                    .putString("display_${currentUser}_${handle}", display)
+                                    .putString("friend_id_${currentUser}_${handle}", id)
+                                    .apply()
+                                save(friends + handle)
+                                result = "$display added to your friends."
+                                results = emptyList()
+                            } catch (error: Exception) {
+                                result = error.message ?: "Could not add this friend."
+                            }
+                        }
                     }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(display); Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
                         Text("Add", color = Forest, fontWeight = FontWeight.Bold)
                     }
-                } else if (search.isNotBlank()) {
-                    Text("No matching account found on this device.", color = Muted, fontSize = 12.sp)
                 }
                 if (result.isNotBlank()) Text(result, color = Forest, fontSize = 12.sp)
-                Text("Account discovery across different phones needs a shared online server, which is not connected yet.", color = Muted, fontSize = 10.sp)
             }
         },
-        confirmButton = { TextButton(onClick = { show = false; search = ""; result = "" }) { Text("Done") } })
+        confirmButton = { TextButton(onClick = { show = false; search = ""; result = ""; results = emptyList() }) { Text("Done") } })
 }
 
 @Composable
@@ -273,7 +326,7 @@ private fun ChatsScreen(user: String, friends: List<String>, prefs: android.cont
         if (friends.isEmpty()) EmptyState(Icons.Default.ChatBubbleOutline, "No conversations yet", "Add a friend to start a conversation.")
         else LazyColumn {
             items(friends) { handle ->
-                val display = directory.optJSONObject(handle)?.optString("name")?.takeIf { it.isNotBlank() } ?: handle
+                val display = prefs.getString("display_${user}_${handle}", handle) ?: handle
                 val messages = runCatching { JSONArray(prefs.getString("messages_${user}_${handle}", "[]") ?: "[]") }.getOrElse { JSONArray() }
                 val last = if (messages.length() > 0) messages.optJSONObject(messages.length()-1)?.optString("text") ?: "No messages yet" else "No messages yet"
                 Row(Modifier.fillMaxWidth().clickable { open(handle) }.padding(horizontal = 20.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
