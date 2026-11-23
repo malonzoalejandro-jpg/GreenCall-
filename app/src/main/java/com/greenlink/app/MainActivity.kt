@@ -256,7 +256,7 @@ private fun ConversationScreen(person: String, onBack: () -> Unit) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }; Avatar(person); Spacer(Modifier.width(10.dp)); Text(person, color = Ink, fontWeight = FontWeight.Bold)
         }
         if (sent.isEmpty()) EmptyState(Icons.Default.ChatBubbleOutline, "Say hello", "Your messages will appear here.")
-        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp)) { items(sent) { Text(it, Modifier.align(Alignment.End).padding(5.dp).background(Mint, RoundedCornerShape(14.dp)).padding(12.dp), color = Ink) } }
+        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp)) { items(sent) { Text(it, Modifier.padding(5.dp).wrapContentWidth(Alignment.End).background(Mint, RoundedCornerShape(14.dp)).padding(12.dp), color = Ink) } }
         Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Message") })
             IconButton(onClick = { if (message.isNotBlank()) { sent = sent + message.trim(); message = "" } }) { Icon(Icons.Default.Send, null, tint = Forest) }
