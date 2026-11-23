@@ -615,6 +615,23 @@ private fun ConversationScreen(
                         ?: withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }.also {
                             prefs.edit().putString("conversation_${storageKey}", it).apply()
                         })
+                if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
+                    runCatching {
+                        val all = withContext(Dispatchers.IO) { GreenCallApi.getConversations(token) }
+                        for (index in 0 until all.length()) {
+                            val group = all.optJSONObject(index) ?: continue
+                            if (group.optString("id") != conversationId) continue
+                            val members = group.optJSONArray("members") ?: JSONArray()
+                            val peers = (0 until members.length()).mapNotNull { members.optJSONObject(it)?.optString("username") }
+                                .filter { it.isNotBlank() && it != currentUser }.toSet()
+                            nearbyPeers = peers
+                            val saved = JSONArray()
+                            peers.forEach { saved.put(it) }
+                            prefs.edit().putString("group_nearby_peers_${currentUser}_${title}", saved.toString()).apply()
+                            break
+                        }
+                    }
+                }
                 val remote = withContext(Dispatchers.IO) { GreenCallApi.getMessages(token, conversationId) }
                 val normalized = JSONArray()
                 val myId = prefs.getString("user_id", "") ?: ""
