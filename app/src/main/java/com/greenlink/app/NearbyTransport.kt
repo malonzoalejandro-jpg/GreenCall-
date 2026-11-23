@@ -71,8 +71,10 @@ class NearbyTransport(
         val packet = ByteArray(data.size + 1)
         packet[0] = type
         if (data.isNotEmpty()) System.arraycopy(data, 0, packet, 1, data.size)
-        client.sendPayload(targets, Payload.fromBytes(packet))
-            .addOnFailureListener { onStatus("Nearby transfer failed") }
+        targets.forEach { endpointId ->
+            client.sendPayload(endpointId, Payload.fromBytes(packet))
+                .addOnFailureListener { onStatus("Nearby transfer failed") }
+        }
     }
 
     private val payloadCallback = object : PayloadCallback() {
