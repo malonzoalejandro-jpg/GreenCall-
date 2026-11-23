@@ -7,11 +7,19 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 class VoiceSessionService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate() {
         super.onCreate()
+        val power = getSystemService(PowerManager::class.java)
+        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GreenCall:VoiceSession").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
@@ -36,6 +44,12 @@ class VoiceSessionService : Service() {
             .build()
         startForeground(NOTIFICATION_ID, notification)
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
