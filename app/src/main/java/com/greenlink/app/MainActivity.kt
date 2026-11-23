@@ -807,7 +807,7 @@ private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> 
                     Switch(muted, setMuted)
                 }
             }
-            Text("Your account, contacts, groups, and sent messages sync through the GreenCall server. Nearby no-internet mode is a separate feature and is not enabled yet.", color = Muted, fontSize = 12.sp)
+            Text("Accounts, contacts, groups, and internet messages sync through GreenCall. Nearby direct text can travel device-to-device without internet when both friends are close and have the chat open. Live voice and server voicemail still need internet.", color = Muted, fontSize = 12.sp)
             OutlinedButton(onClick = signOut, Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(8.dp)); Text("Sign out") }
         }
     }
