@@ -32,6 +32,7 @@ import kotlin.concurrent.thread
 class NearbyTransport(
     context: Context,
     private val displayName: String,
+    private val conversationKey: String,
     private val expectedPeerNames: Set<String>,
     private val isMuted: () -> Boolean,
     private val onStatus: (String) -> Unit,
@@ -41,8 +42,8 @@ class NearbyTransport(
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
-    private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_outbox", Context.MODE_PRIVATE)
-    private val textOutbox = appContext.getSharedPreferences("greencall_nearby_text_outbox", Context.MODE_PRIVATE)
+    private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_$conversationKey", Context.MODE_PRIVATE)
+    private val textOutbox = appContext.getSharedPreferences("greencall_nearby_text_$conversationKey", Context.MODE_PRIVATE)
     private val endpointNames = ConcurrentHashMap<String, String>()
     private val serviceId = "com.greencall.app.nearby"
     private val strategy = Strategy.P2P_CLUSTER
