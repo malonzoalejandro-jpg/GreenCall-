@@ -1,34 +1,38 @@
 # GreenCall
 
-GreenCall is an Android-first offline/online messaging and walkie-talkie project.
+GreenCall is an Android messaging and walkie-talkie app project built with Kotlin and Jetpack Compose.
 
-## Current state
+## Current Android build
 
-This repository starts with an Android Jetpack Compose UI prototype. It demonstrates the green interface, conversation/group/friends/settings navigation, mute control, and a push-to-talk interaction state. It is **not yet a working messaging service**: authentication, microphone capture/playback, live audio transport, nearby discovery, relay routing, encryption, and cloud delivery still need implementation and testing.
+The app now includes:
+- A custom native vector launcher icon and a refreshed forest-green interface.
+- Email registration and sign-in stored locally on the device.
+- Empty-by-default Chats, Friends, and Groups screens (no seeded demo people).
+- Local contact saving, local group creation, and conversation UI.
+- A mute preference and clear offline/device-mode status.
 
-## Agreed transmission behavior
+## Important limitations
 
-- **Unmuted + connected to recipient:** transmit live audio immediately.
-- **Muted + sender online:** do not interrupt the recipient; save the transmission as a voice message/voicemail.
-- **Sender offline:** save it as a queued message and forward it when a direct nearby connection, opted-in relay route, or internet connection becomes available.
-- **No route:** keep it queued locally. Offline does not mean unlimited distance.
-- **Relay privacy:** only encrypted packets should be forwarded, and relay participation must be opt-in.
+This build is an offline UI and local-account foundation, not a deployed multi-user messaging service.
 
-A remote offline live call cannot cross a disconnected country or island. Store-and-forward voice clips can travel over a chain of participating devices, but delivery waits until a route exists.
+- Local accounts are device-local and are not synced across phones.
+- Adding a friend currently saves a local contact; it does not send a network friend request.
+- Group creation is local; inviting other accounts requires the online service.
+- Chat composition is a local UI preview; messages are not delivered to another device yet.
+- Google sign-in requires a Google OAuth Web Client ID and a backend that validates Google ID tokens. These credentials are not present in this repository, so the Google button explains the missing setup instead of pretending to authenticate.
+- Live walkie-talkie audio, voicemail recording/playback, Nearby Connections transport, end-to-end encryption, and relay forwarding are not yet connected.
+
+## Transmission behavior target
+
+- Unmuted + connected recipient: play incoming live voice.
+- Muted: save incoming voice as a voicemail.
+- No route: keep messages queued locally until a direct, opted-in relay, or internet route exists.
+- Relay devices must only forward encrypted packets and must opt in.
+
+Offline does not mean unlimited distance: a disconnected phone cannot deliver a live transmission across an island or country without a network route.
 
 ## Build
 
-Open this folder in Android Studio (JDK 17, Android SDK 35), allow Gradle sync, then run the app on an Android 8.0+ device or emulator.
+Open the project in Android Studio with JDK 17 and Android SDK 35, sync Gradle, and run on Android 8.0+.
 
-GitHub Actions builds a debug APK on every push and uploads it as an Actions artifact when the build succeeds.
-
-## Engineering milestones
-
-1. Persist conversations and outbox with Room.
-2. Implement foreground microphone capture and real-time audio session management.
-3. Implement Nearby Connections discovery/transfer and explicit relay opt-in.
-4. Implement authenticated backend, account registration, friend/group APIs, WebSocket live delivery and push notifications.
-5. Add end-to-end encryption, replay protection, delivery receipts, retry/backoff, and abuse controls.
-6. Test on multiple physical Android devices and different OEM background restrictions.
-
-Never ship credentials or private signing keys in the repository.
+GitHub Actions builds a debug APK on every push and uploads it as `GreenCall-debug-apk` when the build succeeds.
