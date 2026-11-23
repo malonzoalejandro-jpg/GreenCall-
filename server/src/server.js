@@ -242,6 +242,8 @@ io.on('connection', socket => {
           for (const target of sockets) if (!target.data.muted) target.emit('voice:start', { conversationId, senderId:userId });
         }
       }
+      socket.data.liveVoiceRecipients = socket.data.liveVoiceRecipients || {};
+      socket.data.liveVoiceRecipients[conversationId] = liveRecipients;
       ack({ ok:true, liveRecipients });
     } catch { ack({ ok:false,error:'Could not start voice.' }); }
   });
@@ -272,7 +274,8 @@ io.on('connection', socket => {
       for (const row of rows) {
         const sockets = await io.in('user:' + row.user_id).fetchSockets();
         const live = sockets.some(s => !s.data.muted);
-        if (!live) {
+        const wasLive = (socket.data.liveVoiceRecipients?.[conversationId] || []).includes(row.user_id);
+        if (!live || !wasLive) {
           const { rows: inserted } = await query(
             'INSERT INTO voice_mails(conversation_id,sender_id,recipient_id,audio_base64,duration_ms) VALUES($1,$2,$3,$4,$5) RETURNING id,created_at',
             [conversationId,userId,row.user_id,audioBase64,durationMs]
@@ -283,6 +286,7 @@ io.on('connection', socket => {
       }
       const sockets = await io.in(room(conversationId)).fetchSockets();
       for (const target of sockets) if (target.id !== socket.id && !target.data.muted) target.emit('voice:end', { conversationId,senderId:userId });
+      if (socket.data.liveVoiceRecipients) delete socket.data.liveVoiceRecipients[conversationId];
       ack({ ok:true, voicemailRecipients:saved });
     } catch { ack({ ok:false,error:'Could not save voice message.' }); }
   });
