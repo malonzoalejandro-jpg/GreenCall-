@@ -54,6 +54,8 @@ class NearbyTransport(
     @Volatile private var incomingMuted = false
     @Volatile private var incomingStartedAt = 0L
     private val incomingAudio = ByteArrayOutputStream()
+    private val queuedVoiceBuffers = ConcurrentHashMap<String, ByteArrayOutputStream>()
+    private val queuedVoiceDurations = ConcurrentHashMap<String, Int>()
 
     private fun sendFrame(type: Byte, data: ByteArray = byteArrayOf()) {
         if (connected.isEmpty()) return
@@ -100,9 +102,18 @@ class NearbyTransport(
                 }
                 0x04.toByte() -> runCatching {
                     val packet = JSONObject(String(bytes, 1, bytes.size - 1, StandardCharsets.UTF_8))
-                    val audio = Base64.decode(packet.optString("audioBase64"), Base64.DEFAULT)
-                    if (audio.isNotEmpty()) onVoiceMail(audio, packet.optInt("durationMs"))
-                }.onFailure { onStatus("Could not receive queued nearby voice message") }
+                    queuedVoiceBuffers[endpointId] = ByteArrayOutputStream()
+                    queuedVoiceDurations[endpointId] = packet.optInt("durationMs")
+                }.onFailure { onStatus("Could not start queued nearby voice transfer") }
+                0x05.toByte() -> queuedVoiceBuffers[endpointId]?.let { buffer ->
+                    synchronized(buffer) { buffer.write(bytes, 1, bytes.size - 1) }
+                }
+                0x06.toByte() -> {
+                    val buffer = queuedVoiceBuffers.remove(endpointId)
+                    val audio = buffer?.let { synchronized(it) { it.toByteArray() } } ?: byteArrayOf()
+                    val duration = queuedVoiceDurations.remove(endpointId) ?: 0
+                    if (audio.isNotEmpty()) onVoiceMail(audio, duration)
+                }
             }
         }
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
@@ -236,26 +247,64 @@ class NearbyTransport(
     private fun deliverPendingVoice(endpointId: String, peerName: String) {
         if (peerName.isBlank()) return
         val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
-        for (index in 0 until saved.length()) {
-            val item = saved.optJSONObject(index) ?: continue
-            if (!item.optString("target").equals(peerName, ignoreCase = true)) continue
-            val packet = JSONObject()
-                .put("audioBase64", item.optString("audioBase64"))
-                .put("durationMs", item.optInt("durationMs"))
-            val bytes = byteArrayOf(0x04) + packet.toString().toByteArray(StandardCharsets.UTF_8)
-            client.sendPayload(endpointId, Payload.fromBytes(bytes))
+        val pending = (0 until saved.length()).mapNotNull { saved.optJSONObject(it) }
+            .filter { it.optString("target").equals(peerName, ignoreCase = true) }
+        deliverPendingVoiceAt(endpointId, peerName, pending, 0)
+    }
+
+    private fun deliverPendingVoiceAt(
+        endpointId: String,
+        peerName: String,
+        pending: List<JSONObject>,
+        index: Int
+    ) {
+        if (index >= pending.size) return
+        val item = pending[index]
+        val audio = runCatching { Base64.decode(item.optString("audioBase64"), Base64.DEFAULT) }
+            .getOrElse { onStatus("A queued voice note could not be read"); return }
+        val header = JSONObject()
+            .put("id", item.optString("id"))
+            .put("durationMs", item.optInt("durationMs"))
+        val startPacket = byteArrayOf(0x04) + header.toString().toByteArray(StandardCharsets.UTF_8)
+        client.sendPayload(endpointId, Payload.fromBytes(startPacket))
+            .addOnSuccessListener {
+                sendQueuedVoiceChunk(endpointId, peerName, pending, index, item, audio, 0)
+            }
+            .addOnFailureListener { onStatus("Queued nearby voice will retry") }
+    }
+
+    private fun sendQueuedVoiceChunk(
+        endpointId: String,
+        peerName: String,
+        pending: List<JSONObject>,
+        itemIndex: Int,
+        item: JSONObject,
+        audio: ByteArray,
+        offset: Int
+    ) {
+        if (offset < audio.size) {
+            val end = minOf(offset + 8192, audio.size)
+            val chunk = byteArrayOf(0x05) + audio.copyOfRange(offset, end)
+            client.sendPayload(endpointId, Payload.fromBytes(chunk))
                 .addOnSuccessListener {
-                    val current = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
-                    val remaining = JSONArray()
-                    for (i in 0 until current.length()) {
-                        val candidate = current.optJSONObject(i) ?: continue
-                        if (candidate.optString("id") != item.optString("id")) remaining.put(candidate)
-                    }
-                    outbox.edit().putString("pending", remaining.toString()).apply()
-                    onStatus("Queued nearby voice delivered")
+                    sendQueuedVoiceChunk(endpointId, peerName, pending, itemIndex, item, audio, end)
                 }
                 .addOnFailureListener { onStatus("Queued nearby voice will retry") }
+            return
         }
+        client.sendPayload(endpointId, Payload.fromBytes(byteArrayOf(0x06)))
+            .addOnSuccessListener {
+                val current = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                val remaining = JSONArray()
+                for (i in 0 until current.length()) {
+                    val candidate = current.optJSONObject(i) ?: continue
+                    if (candidate.optString("id") != item.optString("id")) remaining.put(candidate)
+                }
+                outbox.edit().putString("pending", remaining.toString()).apply()
+                onStatus("Queued nearby voice delivered")
+                deliverPendingVoiceAt(endpointId, peerName, pending, itemIndex + 1)
+            }
+            .addOnFailureListener { onStatus("Queued nearby voice will retry") }
     }
 
     private fun startPlayback() {
