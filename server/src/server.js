@@ -136,6 +136,19 @@ app.post('/v1/groups', auth, asyncRoute(async (req,res) => {
   } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }));
 
+app.post('/v1/groups/:id/members', auth, asyncRoute(async (req,res) => {
+  const userId = String(req.body.userId || '');
+  const { rows: groups } = await query("SELECT id FROM conversations WHERE id=$1 AND kind='group'", [req.params.id]);
+  if (!groups[0] || !(await member(req.params.id,req.user.sub))) return res.status(403).json({ error:'Only group members can add people.' });
+  if (!userId || userId === req.user.sub) return res.status(400).json({ error:'Choose another user.' });
+  const friendship = await query('SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2', [req.user.sub,userId]);
+  if (!friendship.rowCount) return res.status(403).json({ error:'You can only add your friends.' });
+  const exists = await query('SELECT id FROM users WHERE id=$1', [userId]);
+  if (!exists.rowCount) return res.status(404).json({ error:'User not found.' });
+  await query('INSERT INTO conversation_members(conversation_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [req.params.id,userId]);
+  res.status(201).json({ added:true, userId });
+}));
+
 app.get('/v1/conversations', auth, asyncRoute(async (req,res) => {
   const { rows } = await query(`SELECT c.id,c.kind,c.title,c.created_at,
     (SELECT json_agg(json_build_object('id',u.id,'displayName',u.display_name,'username',u.username))
