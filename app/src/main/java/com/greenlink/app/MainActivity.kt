@@ -142,6 +142,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 storageKey = "messages_${account}_${selected}",
                 prefs = prefs,
                 token = token,
+                currentUser = account,
                 friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
                 conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
                 muted = muted,
@@ -360,6 +361,7 @@ private fun ConversationScreen(
     storageKey: String,
     prefs: android.content.SharedPreferences,
     token: String,
+    currentUser: String,
     friendId: String,
     conversationIdOverride: String,
     muted: Boolean,
@@ -375,8 +377,56 @@ private fun ConversationScreen(
     var voicemailCount by remember { mutableIntStateOf(0) }
     var voicemailList by remember { mutableStateOf(emptyList<JSONObject>()) }
     var showVoicemails by remember { mutableStateOf(false) }
+    var nearbyStatus by remember { mutableStateOf("Nearby mode is off") }
+    var nearbyIncoming by remember { mutableStateOf<JSONObject?>(null) }
+    var nearbyEnabled by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val nearbyPermissions = remember {
+        buildList {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            } else {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }.toTypedArray()
+    }
+    val nearbyTransport = remember(storageKey, currentUser) {
+        NearbyTransport(context, currentUser,
+            onStatus = { nearbyStatus = it },
+            onText = { nearbyIncoming = it })
+    }
+    val nearbyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val allowed = nearbyPermissions.all { permission ->
+            grants[permission] == true || ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allowed) {
+            nearbyEnabled = true
+            nearbyTransport.start()
+        } else nearbyStatus = "Nearby permissions are needed for offline messaging"
+    }
+    DisposableEffect(nearbyTransport) {
+        onDispose { nearbyTransport.stop() }
+    }
+    LaunchedEffect(nearbyIncoming) {
+        val packet = nearbyIncoming ?: return@LaunchedEffect
+        val text = packet.optString("text")
+        if (text.isNotBlank()) {
+            val updated = JSONArray(messages.toString()).put(JSONObject()
+                .put("id", "nearby-${packet.optLong("sentAt", System.currentTimeMillis())}")
+                .put("text", text).put("mine", false).put("nearby", true)
+                .put("time", packet.optLong("sentAt", System.currentTimeMillis()).toString()))
+            messages = updated
+            raw = updated.toString()
+            prefs.edit().putString(storageKey, raw).apply()
+        }
+        nearbyIncoming = null
+    }
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
     fun retryPendingMessages() {
         scope.launch {
@@ -409,7 +459,10 @@ private fun ConversationScreen(
         if (token.isNotBlank() && (friendId.isNotBlank() || conversationIdOverride.isNotBlank())) {
             try {
                 conversationId = if (conversationIdOverride.isNotBlank()) conversationIdOverride
-                    else withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }
+                    else (prefs.getString("conversation_${storageKey}", "")?.takeIf { it.isNotBlank() }
+                        ?: withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }.also {
+                            prefs.edit().putString("conversation_${storageKey}", it).apply()
+                        })
                 val remote = withContext(Dispatchers.IO) { GreenCallApi.getMessages(token, conversationId) }
                 val normalized = JSONArray()
                 val myId = prefs.getString("user_id", "") ?: ""
@@ -434,7 +487,10 @@ private fun ConversationScreen(
                 connectionError = error.message ?: "Unable to load this conversation."
             }
         } else {
-            connectionError = "This friend is not linked to a server account yet."
+            val cached = prefs.getString("conversation_${storageKey}", "") ?: ""
+            conversationId = cached.ifBlank { "nearby-${currentUser}-${storageKey.substringAfterLast("_")}" }
+            connectionError = if (friendId.isBlank() && conversationIdOverride.isBlank())
+                "This friend is not linked to a server account yet." else "Offline mode: connect to your friend nearby to exchange messages."
         }
         loading = false
     }
@@ -482,7 +538,7 @@ private fun ConversationScreen(
             Avatar(title); Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = Ink, fontWeight = FontWeight.Bold)
-                Text(if (conversationId.isNotBlank()) "GreenCall voice channel" else "Connecting…", color = Muted, fontSize = 11.sp)
+                Text(if (nearbyEnabled) "Nearby device mode active" else if (conversationId.isNotBlank()) "GreenCall voice channel" else "Offline conversation", color = Muted, fontSize = 11.sp)
             }
             TextButton(onClick = {
                 scope.launch {
@@ -525,6 +581,23 @@ private fun ConversationScreen(
             }
         }
         if (connectionError.isNotBlank()) Text(connectionError, Modifier.padding(horizontal = 12.dp), color = Color(0xFFB33A2B), fontSize = 10.sp)
+        Row(Modifier.fillMaxWidth().background(Mint).padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Nearby offline mode", color = Forest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text(nearbyStatus, color = Muted, fontSize = 10.sp)
+            }
+            if (!nearbyEnabled) {
+                TextButton(onClick = {
+                    val missing = nearbyPermissions.filter {
+                        ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+                    }
+                    if (missing.isEmpty()) { nearbyEnabled = true; nearbyTransport.start() }
+                    else nearbyPermissionLauncher.launch(missing.toTypedArray())
+                }) { Text("Connect", color = Forest) }
+            } else {
+                TextButton(onClick = { nearbyTransport.stop(); nearbyEnabled = false; nearbyStatus = "Nearby mode is off" }) { Text("Stop", color = Forest) }
+            }
+        }
         Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(voiceStatus, color = if (receivingVoice) Forest else Muted, fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
@@ -584,16 +657,19 @@ private fun ConversationScreen(
                             prefs.edit().putString(storageKey, raw).apply()
                             connectionError = ""
                         } catch (error: Exception) {
+                            val nearbySent = nearbyTransport.sendText(body)
                             val queued = JSONArray(messages.toString()).put(JSONObject()
                                 .put("id", "pending-${System.currentTimeMillis()}")
                                 .put("text", body)
                                 .put("mine", true)
-                                .put("pending", true)
+                                .put("pending", !nearbySent)
+                                .put("nearby", nearbySent)
                                 .put("time", System.currentTimeMillis().toString()))
                             messages = queued
                             raw = queued.toString()
                             prefs.edit().putString(storageKey, raw).apply()
-                            connectionError = "Saved on this device. It will stay pending until you retry online."
+                            connectionError = if (nearbySent) "Sent directly over Nearby — no internet used."
+                                else "Saved on this device. It will send when a nearby friend connects or internet returns."
                         }
                     }
                 } else if (body.isNotBlank()) {
