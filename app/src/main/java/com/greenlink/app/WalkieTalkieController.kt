@@ -20,7 +20,8 @@ class WalkieTalkieController(
     private var muted: Boolean,
     private val onStatus: (String) -> Unit,
     private val onIncoming: (Boolean) -> Unit,
-    private val onVoicemail: () -> Unit
+    private val onVoicemail: () -> Unit,
+    private val onMessage: (JSONObject) -> Unit
 ) {
     private val sampleRate = 16000
     private val maxVoiceBytes = 800000
@@ -74,6 +75,10 @@ class WalkieTalkieController(
                 onIncoming(false)
             }
             client.on("voicemail:new") { onVoicemail() }
+            client.on("message:new") { args ->
+                val item = args.firstOrNull() as? JSONObject
+                if (item != null) onMessage(item)
+            }
             client.connect()
         } catch (error: Exception) {
             onStatus(error.message ?: "Voice connection failed")
