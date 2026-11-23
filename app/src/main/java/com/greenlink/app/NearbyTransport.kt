@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 class NearbyTransport(
     context: Context,
     private val displayName: String,
+    private val expectedPeerName: String,
     private val onStatus: (String) -> Unit,
     private val onText: (JSONObject) -> Unit
 ) {
@@ -47,6 +48,10 @@ class NearbyTransport(
 
     private val lifecycle = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
+            if (!info.endpointName.equals(expectedPeerName, ignoreCase = true)) {
+                client.rejectConnection(endpointId)
+                return
+            }
             client.acceptConnection(endpointId, payloadCallback)
                 .addOnFailureListener { onStatus("Nearby connection was rejected") }
         }
@@ -67,7 +72,7 @@ class NearbyTransport(
 
     private val discovery = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-            if (endpointId !in connected) {
+            if (info.endpointName.equals(expectedPeerName, ignoreCase = true) && endpointId !in connected) {
                 client.requestConnection(displayName.take(32), endpointId, lifecycle)
                     .addOnFailureListener { onStatus("Could not connect to nearby device") }
             }
@@ -78,6 +83,10 @@ class NearbyTransport(
     }
 
     fun start() {
+        if (expectedPeerName.isBlank()) {
+            onStatus("Nearby direct mode needs a selected friend")
+            return
+        }
         if (started) return
         started = true
         onStatus("Searching nearby devices…")
