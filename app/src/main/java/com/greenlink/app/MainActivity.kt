@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -497,6 +499,21 @@ private fun ConversationScreen(
                 }
             }
         }
+    }
+    DisposableEffect(token, conversationId) {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                retryPendingMessages()
+            }
+        }
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
+        val active = manager.activeNetwork
+        val capabilities = active?.let { manager.getNetworkCapabilities(it) }
+        if (capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+            retryPendingMessages()
+        }
+        onDispose { runCatching { manager.unregisterNetworkCallback(callback) } }
     }
     val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
