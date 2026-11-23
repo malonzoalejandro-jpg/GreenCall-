@@ -722,11 +722,22 @@ private fun ConversationScreen(
             onMessage = { item ->
                 val myId = prefs.getString("user_id", "") ?: ""
                 if (item.optString("sender_id") != myId) {
-                    val updated = JSONArray(messages.toString()).put(JSONObject()
+                    val normalized = JSONObject()
                         .put("id", item.optString("id"))
                         .put("text", item.optString("body"))
                         .put("mine", false)
-                        .put("time", item.optString("created_at")))
+                        .put("time", item.optString("created_at"))
+                    val nearbyDuplicate = (0 until messages.length()).firstOrNull { index ->
+                        val existing = messages.optJSONObject(index)
+                        existing?.optBoolean("nearby") == true && !existing.optBoolean("mine") &&
+                            existing.optString("text") == item.optString("body")
+                    }
+                    val updated = JSONArray()
+                    for (index in 0 until messages.length()) {
+                        if (index == nearbyDuplicate) updated.put(normalized)
+                        else updated.put(messages.getJSONObject(index))
+                    }
+                    if (nearbyDuplicate == null) updated.put(normalized)
                     messages = updated
                     raw = updated.toString()
                     prefs.edit().putString(storageKey, raw).apply()
