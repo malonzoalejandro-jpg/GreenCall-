@@ -412,6 +412,7 @@ private fun ConversationScreen(
     var nearbyTalking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val mutedState by rememberUpdatedState(muted)
     val nearbyPermissions = remember {
         buildList {
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -426,7 +427,7 @@ private fun ConversationScreen(
     }
     val nearbyTransport = remember(storageKey, currentUser) {
         NearbyTransport(context, currentUser, expectedPeerNames,
-            isMuted = { muted },
+            isMuted = { mutedState },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
             onIncomingVoice = { receivingVoice = it },
