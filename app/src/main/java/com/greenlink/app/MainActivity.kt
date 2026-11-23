@@ -118,8 +118,8 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
             ) { pad ->
                 when (tab) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
-                    1 -> GroupsScreen(groups, friends, ::saveGroups, pad)
-                    2 -> FriendsScreen(friends, prefs, ::saveFriends, pad)
+                    1 -> GroupsScreen(groups, friends, account, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
+                    2 -> FriendsScreen(friends, account, prefs, ::saveFriends, pad)
                     else -> SettingsScreen(account, muted, { muted = it }, {
                         prefs.edit().remove("session").apply()
                         account = ""; selected = ""; tab = 0
@@ -212,7 +212,7 @@ private fun accountDirectory(prefs: android.content.SharedPreferences) =
     runCatching { JSONObject(prefs.getString("accounts", "{}") ?: "{}") }.getOrElse { JSONObject() }
 
 @Composable
-private fun FriendsScreen(friends: List<String>, prefs: android.content.SharedPreferences,
+private fun FriendsScreen(friends: List<String>, currentUser: String, prefs: android.content.SharedPreferences,
                           save: (List<String>) -> Unit, pad: PaddingValues) {
     var show by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
@@ -222,7 +222,7 @@ private fun FriendsScreen(friends: List<String>, prefs: android.content.SharedPr
         val key = directory.names()?.optString(i) ?: return@mapNotNull null
         val profile = directory.optJSONObject(key) ?: return@mapNotNull null
         Triple(key, profile.optString("name"), profile.optString("name").contains(search.trim(), true))
-    }.filter { search.isNotBlank() && it.third && it.first !in friends }
+    }.filter { search.isNotBlank() && it.third && it.first !in friends && it.first != currentUser }
     Column(Modifier.fillMaxSize().padding(pad)) {
         Header("Friends", "Find people by their display name.")
         if (friends.isEmpty()) EmptyState(Icons.Default.PersonSearch, "No friends added", "Tap Add friend and search their name.")
@@ -331,7 +331,7 @@ private fun ConversationScreen(title: String, storageKey: String, prefs: android
 }
 
 @Composable
-private fun GroupsScreen(groups: List<String>, friends: List<String>, save: (List<String>) -> Unit, pad: PaddingValues) {
+private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUser: String, prefs: android.content.SharedPreferences, open: (String) -> Unit, save: (List<String>) -> Unit, pad: PaddingValues) {
     var show by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var selectedMembers by remember { mutableStateOf(setOf<String>()) }
