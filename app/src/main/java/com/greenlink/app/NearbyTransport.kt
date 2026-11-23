@@ -121,7 +121,8 @@ class NearbyTransport(
 
     private val discovery = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-            if (expectedPeerNames.any { it.equals(info.endpointName, ignoreCase = true) } && endpointId !in connected) {
+            val isInitiator = displayName.compareTo(info.endpointName, ignoreCase = true) < 0
+            if (isInitiator && expectedPeerNames.any { it.equals(info.endpointName, ignoreCase = true) } && endpointId !in connected) {
                 client.requestConnection(displayName.take(32), endpointId, lifecycle)
                     .addOnFailureListener { onStatus("Could not connect to nearby device") }
             }
