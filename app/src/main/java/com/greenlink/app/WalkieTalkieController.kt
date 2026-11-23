@@ -140,10 +140,8 @@ class WalkieTalkieController(
                     val copy = buffer.copyOf(count)
                     var shouldSend = false
                     synchronized(audioBytes) {
-                        if (audioBytes.size() + count <= maxVoiceBytes) {
-                            audioBytes.write(copy)
-                            shouldSend = true
-                        }
+                        if (audioBytes.size() + count <= maxVoiceBytes) audioBytes.write(copy)
+                        shouldSend = true
                     }
                     if (shouldSend && liveStream) {
                         socket?.emit("voice:chunk", JSONObject()
