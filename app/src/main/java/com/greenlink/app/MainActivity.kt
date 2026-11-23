@@ -2,8 +2,12 @@ package com.greenlink.app
 
 import android.content.Context
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,6 +21,10 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +71,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
     var friends by remember { mutableStateOf(emptyList<String>()) }
     var groups by remember { mutableStateOf(emptyList<String>()) }
     var selected by remember { mutableStateOf("") }
-    var muted by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(prefs.getBoolean("muted", false)) }
 
     fun loadUserData(user: String) {
         friends = parseArray(prefs.getString("friends_$user", "[]") ?: "[]")
@@ -135,6 +143,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 token = token,
                 friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
                 conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
+                muted = muted,
                 onBack = { selected = "" }
             )
         } else {
@@ -153,7 +162,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
                     1 -> GroupsScreen(groups, friends, account, token, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
                     2 -> FriendsScreen(friends, account, token, prefs, ::saveFriends, pad)
-                    else -> SettingsScreen(account, muted, { muted = it }, {
+                    else -> SettingsScreen(account, muted, { muted = it; prefs.edit().putBoolean("muted", it).apply() }, {
                         prefs.edit().remove("session").remove("token").apply()
                         token = ""
                         account = ""; selected = ""; tab = 0
@@ -352,6 +361,7 @@ private fun ConversationScreen(
     token: String,
     friendId: String,
     conversationIdOverride: String,
+    muted: Boolean,
     onBack: () -> Unit
 ) {
     var raw by remember(storageKey) { mutableStateOf(prefs.getString(storageKey, "[]") ?: "[]") }
@@ -359,8 +369,18 @@ private fun ConversationScreen(
     var conversationId by remember { mutableStateOf("") }
     var connectionError by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
+    var voiceStatus by remember { mutableStateOf("Connecting voice…") }
+    var receivingVoice by remember { mutableStateOf(false) }
+    var voicemailCount by remember { mutableIntStateOf(0) }
+    var voicemailList by remember { mutableStateOf(emptyList<JSONObject>()) }
+    var showVoicemails by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
+    val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        voiceStatus = if (granted) "Microphone ready — press and hold to talk" else "Microphone permission is required for walkie-talkie"
+    }
 
     LaunchedEffect(token, friendId, conversationIdOverride) {
         if (token.isNotBlank() && (friendId.isNotBlank() || conversationIdOverride.isNotBlank())) {
@@ -373,6 +393,7 @@ private fun ConversationScreen(
                 for (i in 0 until remote.length()) {
                     val item = remote.getJSONObject(i)
                     normalized.put(JSONObject()
+                        .put("id", item.optString("id"))
                         .put("text", item.optString("body"))
                         .put("mine", item.optString("sender_id") == myId)
                         .put("time", item.optString("created_at")))
@@ -390,17 +411,77 @@ private fun ConversationScreen(
         loading = false
     }
 
+    val voiceController = remember(conversationId, token) {
+        if (conversationId.isBlank()) null else WalkieTalkieController(
+            token = token,
+            conversationId = conversationId,
+            muted = muted,
+            onStatus = { voiceStatus = it },
+            onIncoming = { receivingVoice = it },
+            onVoicemail = { voicemailCount += 1 },
+            onMessage = { item ->
+                val myId = prefs.getString("user_id", "") ?: ""
+                if (item.optString("sender_id") != myId) {
+                    val updated = JSONArray(messages.toString()).put(JSONObject()
+                        .put("id", item.optString("id"))
+                        .put("text", item.optString("body"))
+                        .put("mine", false)
+                        .put("time", item.optString("created_at")))
+                    messages = updated
+                    raw = updated.toString()
+                    prefs.edit().putString(storageKey, raw).apply()
+                }
+            }
+        )
+    }
+    LaunchedEffect(voiceController, muted) { voiceController?.setMuted(muted) }
+    DisposableEffect(voiceController) {
+        onDispose { voiceController?.close() }
+    }
+    LaunchedEffect(token, conversationId) {
+        if (token.isNotBlank() && conversationId.isNotBlank()) {
+            runCatching {
+                val list = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
+                voicemailList = (0 until list.length()).map { list.getJSONObject(it) }
+                voicemailCount = voicemailList.size
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(Modifier.fillMaxWidth().background(Color.White).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
             Avatar(title); Spacer(Modifier.width(10.dp))
-            Column { Text(title, color = Ink, fontWeight = FontWeight.Bold); Text(if (conversationId.isNotBlank()) "Synced with GreenCall" else "Connecting…", color = Muted, fontSize = 11.sp) }
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Ink, fontWeight = FontWeight.Bold)
+                Text(if (conversationId.isNotBlank()) "GreenCall voice channel" else "Connecting…", color = Muted, fontSize = 11.sp)
+            }
+            TextButton(onClick = {
+                scope.launch {
+                    try {
+                        val list = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
+                        voicemailList = (0 until list.length()).map { list.getJSONObject(it) }
+                        voicemailCount = voicemailList.size
+                        showVoicemails = true
+                    } catch (error: Exception) { connectionError = error.message ?: "Could not load voicemails." }
+                }
+            }) {
+                Icon(Icons.Default.Voicemail, null, tint = Forest)
+                if (voicemailCount > 0) Text("$voicemailCount", color = Forest, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (receivingVoice) {
+            Row(Modifier.fillMaxWidth().background(Mint).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.VolumeUp, null, tint = Forest)
+                Spacer(Modifier.width(8.dp))
+                Text("Receiving live voice…", color = Forest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            }
         }
         if (loading && messages.length() == 0) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Leaf) }
         } else if (messages.length() == 0) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                EmptyState(Icons.Default.ChatBubbleOutline, "Start the conversation", "Your messages sync through GreenCall.")
+                EmptyState(Icons.Default.ChatBubbleOutline, "Start the conversation", "Send a message or hold the walkie-talkie button.")
             }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -416,6 +497,38 @@ private fun ConversationScreen(
             }
         }
         if (connectionError.isNotBlank()) Text(connectionError, Modifier.padding(horizontal = 12.dp), color = Color(0xFFB33A2B), fontSize = 10.sp)
+        Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(voiceStatus, color = if (receivingVoice) Forest else Muted, fontSize = 11.sp)
+            Spacer(Modifier.height(8.dp))
+            if (muted) {
+                Text("Walkie-talkie is muted. Incoming voice will be saved as voicemail.", color = Muted, fontSize = 11.sp)
+            } else if (!micGranted) {
+                Button(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }, enabled = conversationId.isNotBlank()) {
+                    Icon(Icons.Default.Mic, null); Spacer(Modifier.width(6.dp)); Text("Enable microphone")
+                }
+            } else {
+                Box(
+                    Modifier.fillMaxWidth().height(58.dp)
+                        .background(if (receivingVoice) Color(0xFFDBEDE3) else Forest, RoundedCornerShape(16.dp))
+                        .pointerInput(voiceController, muted, micGranted) {
+                            detectTapGestures(onPress = {
+                                val started = voiceController?.startTalking() == true
+                                if (started) {
+                                    tryAwaitRelease()
+                                    voiceController?.stopTalking()
+                                }
+                            })
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Mic, null, tint = Color.White)
+                        Spacer(Modifier.width(9.dp))
+                        Text("PRESS AND HOLD TO TALK", color = Color.White, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Write a message…") }, maxLines = 4)
             IconButton(onClick = {
@@ -426,6 +539,7 @@ private fun ConversationScreen(
                         try {
                             val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, body) }
                             val updated = JSONArray(messages.toString()).put(JSONObject()
+                                .put("id", sent.optString("id"))
                                 .put("text", sent.optString("body", body))
                                 .put("mine", true)
                                 .put("time", sent.optString("created_at")))
@@ -443,7 +557,40 @@ private fun ConversationScreen(
                 }
             }, enabled = conversationId.isNotBlank()) { Icon(Icons.Default.Send, null, tint = Forest) }
         }
-        Text("Messages are stored on the GreenCall server when sent.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
+        Text("Text messages sync live. Voice notes are saved for muted or offline friends.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
+    }
+
+    if (showVoicemails) {
+        AlertDialog(
+            onDismissRequest = { showVoicemails = false },
+            title = { Text("Voice messages") },
+            text = {
+                if (voicemailList.isEmpty()) Text("No new voicemails.")
+                else Column {
+                    voicemailList.forEach { item ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.optString("sender_name", "GreenCall friend"), color = Ink, fontWeight = FontWeight.SemiBold)
+                                Text("${(item.optInt("duration_ms") / 1000)} sec · ${item.optString("created_at")}", color = Muted, fontSize = 10.sp)
+                            }
+                            IconButton(onClick = {
+                                scope.launch {
+                                    try {
+                                        val audio = withContext(Dispatchers.IO) { GreenCallApi.getVoicemailAudio(token, item.optString("id")) }
+                                        voiceController?.playVoicemail(audio)
+                                        val refreshed = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
+                                        voicemailList = (0 until refreshed.length()).map { refreshed.getJSONObject(it) }
+                                        voicemailCount = voicemailList.size
+                                    } catch (error: Exception) { connectionError = error.message ?: "Could not play voicemail." }
+                                }
+                            }) { Icon(Icons.Default.PlayArrow, null, tint = Forest) }
+                        }
+                        HorizontalDivider(color = Color(0xFFE8EEE9))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showVoicemails = false }) { Text("Done") } }
+        )
     }
 }
 
