@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONArray
 import org.json.JSONObject
+import android.util.Base64
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -382,6 +383,7 @@ private fun ConversationScreen(
     var nearbyStatus by remember { mutableStateOf("Nearby mode is off") }
     var nearbyIncoming by remember { mutableStateOf<JSONObject?>(null) }
     var nearbyEnabled by remember { mutableStateOf(false) }
+    var nearbyTalking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val nearbyPermissions = remember {
@@ -398,8 +400,31 @@ private fun ConversationScreen(
     }
     val nearbyTransport = remember(storageKey, currentUser) {
         NearbyTransport(context, currentUser, expectedPeerName,
+            isMuted = { muted },
             onStatus = { nearbyStatus = it },
-            onText = { nearbyIncoming = it })
+            onText = { nearbyIncoming = it },
+            onIncomingVoice = { receivingVoice = it },
+            onVoiceMail = { audio, duration ->
+                val item = JSONObject()
+                    .put("id", "nearby-voice-${System.currentTimeMillis()}")
+                    .put("sender_name", title)
+                    .put("duration_ms", duration)
+                    .put("audioBase64", Base64.encodeToString(audio, Base64.NO_WRAP))
+                    .put("local", true)
+                    .put("created_at", "Received nearby")
+                voicemailList = listOf(item) + voicemailList
+                voicemailCount = voicemailList.size
+                prefs.edit().putString("local_voicemail_${currentUser}", JSONArray(voicemailList.filter { it.optBoolean("local") }.map { it.toString() }).toString()).apply()
+                voiceStatus = "Nearby voice saved as voicemail"
+            })
+    }
+    LaunchedEffect(currentUser) {
+        val saved = runCatching { JSONArray(prefs.getString("local_voicemail_${currentUser}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        if (saved.length() > 0) {
+            val local = (0 until saved.length()).mapNotNull { saved.optJSONObject(it) }
+            voicemailList = local + voicemailList
+            voicemailCount = voicemailList.size
+        }
     }
     val nearbyPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
