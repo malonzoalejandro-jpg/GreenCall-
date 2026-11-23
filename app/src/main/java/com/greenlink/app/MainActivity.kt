@@ -433,6 +433,10 @@ private fun ConversationScreen(
     }
     val nearbyTransport = remember(storageKey, currentUser, nearbyPeers) {
         NearbyTransport(context, currentUser, storageKey, nearbyPeers,
+            expectedPeerIds = nearbyPeers.associateWith { handle ->
+                (prefs.getString("friend_id_${currentUser}_${handle}", "") ?: "")
+                    .ifBlank { if (nearbyPeers.size == 1) friendId else "" }
+            }.filterValues { it.isNotBlank() },
             isMuted = { mutedState },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
