@@ -1,5 +1,6 @@
 package com.greenlink.app
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -10,12 +11,14 @@ import android.util.Base64
 import io.socket.client.IO
 import io.socket.client.Socket
 import io.socket.client.Ack
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 class WalkieTalkieController(
+    private val context: Context,
     private val token: String,
     private val conversationId: String,
     private var muted: Boolean,
@@ -52,6 +55,7 @@ class WalkieTalkieController(
                 client.emit("conversation:join", JSONObject().put("conversationId", conversationId))
                 client.emit("voice:mute", JSONObject().put("muted", muted))
                 onStatus("Voice connected")
+                flushPendingVoicemails()
             }
             client.on(Socket.EVENT_DISCONNECT) { onStatus("Reconnecting voice…") }
             client.on(Socket.EVENT_CONNECT_ERROR) { onStatus("Voice connection unavailable") }
@@ -185,13 +189,53 @@ class WalkieTalkieController(
         liveStream = false
     }
 
+    private val queueKey get() = "pending_voice_$conversationId"
+
+    private fun savePendingVoicemail(encoded: String, durationMs: Int) {
+        synchronized(context) {
+            val prefs = context.getSharedPreferences("greencall", Context.MODE_PRIVATE)
+            val queue = runCatching { JSONArray(prefs.getString(queueKey, "[]") ?: "[]") }.getOrElse { JSONArray() }
+            queue.put(JSONObject()
+                .put("audioBase64", encoded)
+                .put("durationMs", durationMs)
+                .put("createdAt", System.currentTimeMillis()))
+            prefs.edit().putString(queueKey, queue.toString()).apply()
+        }
+        onStatus("No internet — voice saved on this device and queued for delivery")
+    }
+
+    private fun flushPendingVoicemails() {
+        if (token.isBlank() || conversationId.startsWith("nearby-")) return
+        thread(name = "GreenCallVoiceOutbox") {
+            val prefs = context.getSharedPreferences("greencall", Context.MODE_PRIVATE)
+            val queue = synchronized(context) {
+                runCatching { JSONArray(prefs.getString(queueKey, "[]") ?: "[]") }.getOrElse { JSONArray() }
+            }
+            if (queue.length() == 0) return@thread
+            val remaining = JSONArray()
+            for (index in 0 until queue.length()) {
+                val item = queue.optJSONObject(index) ?: continue
+                try {
+                    GreenCallApi.sendVoicemail(token, conversationId, item.optString("audioBase64"), item.optInt("durationMs"))
+                } catch (_: Exception) {
+                    remaining.put(item)
+                }
+            }
+            synchronized(context) {
+                prefs.edit().putString(queueKey, remaining.toString()).apply()
+            }
+            if (remaining.length() == 0) onStatus("Queued voice messages delivered")
+            else onStatus("${remaining.length()} voice message(s) still waiting for internet")
+        }
+    }
+
     private fun sendRestFallback(encoded: String, durationMs: Int) {
         thread(name = "GreenCallVoiceUpload") {
             try {
                 GreenCallApi.sendVoicemail(token, conversationId, encoded, durationMs)
                 onStatus("Voice message saved for delivery")
-            } catch (error: Exception) {
-                onStatus(error.message ?: "Voice message could not be sent")
+            } catch (_: Exception) {
+                savePendingVoicemail(encoded, durationMs)
             }
         }
     }
