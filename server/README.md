@@ -28,7 +28,7 @@ Clients authenticate REST with `Authorization: Bearer <token>` and Socket.IO wit
 
 ## Important behavior
 
-Messages are stored in PostgreSQL, so recipients can fetch them after reconnecting. Voice packets are forwarded only to authorized conversation members currently connected; the app must save muted/offline audio as a voicemail via the voicemail endpoint. This server does not create a radio path when devices have no internet. Nearby Connections transport and end-to-end media encryption still need to be implemented in the Android client before describing voice as production-ready.
+Messages are stored in PostgreSQL, so recipients can fetch them after reconnecting. Voice packets are forwarded only to authorized conversation members currently connected; muted/offline audio is stored as a voicemail in PostgreSQL. The Android client also implements Nearby Connections for direct text and push-to-talk voice, including a local voice outbox that transfers queued recordings when a friend reconnects within radio range. The server cannot create a radio path when devices have no internet. Nearby identity verification and end-to-end encryption are not implemented, so the app is not production-ready for sensitive communications.
 
 ## Security notes
 
