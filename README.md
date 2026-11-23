@@ -1,38 +1,24 @@
 # GreenCall
 
-GreenCall is an Android messaging and walkie-talkie app project built with Kotlin and Jetpack Compose.
+GreenCall is an Android messaging and walkie-talkie app built with Kotlin and Jetpack Compose, with a Node.js + PostgreSQL realtime backend.
 
-## Current Android build
+## Android app
+- Registration uses display name, username, and password (no Google sign-in).
+- Friend discovery is designed around registered display names; results show the @username.
+- Private and group conversations, message history, and mute settings are part of the Android client.
+- GitHub Actions builds a debug APK on every push and uploads it as `GreenCall-debug-apk`.
 
-The app now includes:
-- A custom native vector launcher icon and a refreshed forest-green interface.
-- Email registration and sign-in stored locally on the device.
-- Empty-by-default Chats, Friends, and Groups screens (no seeded demo people).
-- Local contact saving, local group creation, and conversation UI.
-- A mute preference and clear offline/device-mode status.
+## Backend
+The `server/` directory contains the REST + Socket.IO API, PostgreSQL schema, Dockerfile, and Railway deployment configuration. See [server deployment guide](server/README.md).
 
-## Important limitations
+The backend supports shared registration/login, display-name search, friends, direct and group conversations, persisted text messages, voicemail storage, and authorized live voice packet forwarding. It must be deployed and its URL configured in the Android app before cross-device online features are available.
 
-This build is an offline UI and local-account foundation, not a deployed multi-user messaging service.
-
-- Local accounts are device-local and are not synced across phones.
-- Adding a friend currently saves a local contact; it does not send a network friend request.
-- Group creation is local; inviting other accounts requires the online service.
-- Chat composition is a local UI preview; messages are not delivered to another device yet.
-- Google sign-in requires a Google OAuth Web Client ID and a backend that validates Google ID tokens. These credentials are not present in this repository, so the Google button explains the missing setup instead of pretending to authenticate.
-- Live walkie-talkie audio, voicemail recording/playback, Nearby Connections transport, end-to-end encryption, and relay forwarding are not yet connected.
-
-## Transmission behavior target
-
-- Unmuted + connected recipient: play incoming live voice.
-- Muted: save incoming voice as a voicemail.
-- No route: keep messages queued locally until a direct, opted-in relay, or internet route exists.
-- Relay devices must only forward encrypted packets and must opt in.
-
-Offline does not mean unlimited distance: a disconnected phone cannot deliver a live transmission across an island or country without a network route.
+## Offline behavior
+- Online messages are stored on the server and can be fetched after reconnecting.
+- Unmuted connected recipients can receive live voice packets over Socket.IO.
+- Muted/offline recipients can receive saved voicemails once connected.
+- When internet is unavailable, messages/audio need a direct nearby route or an opted-in relay. The server cannot transmit across a network outage or across islands without any route.
+- Nearby Connections transport, on-device audio capture/playback, and end-to-end media encryption remain client-side work and are not claimed as complete.
 
 ## Build
-
-Open the project in Android Studio with JDK 17 and Android SDK 35, sync Gradle, and run on Android 8.0+.
-
-GitHub Actions builds a debug APK on every push and uploads it as `GreenCall-debug-apk` when the build succeeds.
+Open in Android Studio with JDK 17 and Android SDK 35. The app uses the Android build workflow in GitHub Actions.
