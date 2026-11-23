@@ -117,14 +117,19 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                     val groupName = conversation.optString("title").ifBlank { "Group" }
                     val memberArray = conversation.optJSONArray("members") ?: JSONArray()
                     val peerNames = mutableListOf<String>()
+                    val peerIds = JSONObject()
                     for (memberIndex in 0 until memberArray.length()) {
                         val member = memberArray.optJSONObject(memberIndex) ?: continue
                         val username = member.optString("username")
-                        if (username.isNotBlank() && username != account) peerNames.add(username)
+                        if (username.isNotBlank() && username != account) {
+                            peerNames.add(username)
+                            peerIds.put(username, member.optString("id"))
+                        }
                     }
                     groupNames.add(groupName)
                     edit.putString("group_id_${account}_${groupName}", conversation.optString("id"))
                     edit.putString("group_nearby_peers_${account}_${groupName}", JSONArray(peerNames).toString())
+                    edit.putString("group_nearby_peer_ids_${account}_${groupName}", peerIds.toString())
                 }
                 edit.putString("groups_${account}", JSONArray(groupNames.distinct()).toString()).apply()
                 groups = groupNames.distinct()
