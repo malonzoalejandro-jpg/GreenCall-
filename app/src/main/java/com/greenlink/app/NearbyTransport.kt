@@ -42,8 +42,11 @@ class NearbyTransport(
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
-    private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_$conversationKey", Context.MODE_PRIVATE)
-    private val textOutbox = appContext.getSharedPreferences("greencall_nearby_text_$conversationKey", Context.MODE_PRIVATE)
+    private val conversationStorageKey = Base64.encodeToString(
+        conversationKey.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+    )
+    private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_$conversationStorageKey", Context.MODE_PRIVATE)
+    private val textOutbox = appContext.getSharedPreferences("greencall_nearby_text_$conversationStorageKey", Context.MODE_PRIVATE)
     private val endpointNames = ConcurrentHashMap<String, String>()
     private val serviceId = "com.greencall.app.nearby"
     private val strategy = Strategy.P2P_CLUSTER
