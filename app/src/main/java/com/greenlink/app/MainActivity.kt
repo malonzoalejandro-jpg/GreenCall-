@@ -118,6 +118,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                             .putString("session", username)
                             .putString("token", newToken)
                             .putString("display_name", user.optString("displayName"))
+                            .putString("user_id", user.optString("id"))
                             .apply()
                         token = newToken
                         account = username
@@ -128,9 +129,11 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
             }, { authPage = it })
         } else if (selected.isNotBlank()) {
             ConversationScreen(
-                title = selected,
+                title = prefs.getString("display_${account}_${selected}", selected) ?: selected,
                 storageKey = "messages_${account}_${selected}",
                 prefs = prefs,
+                token = token,
+                friendId = prefs.getString("friend_id_${account}_${selected}", "") ?: "",
                 onBack = { selected = "" }
             )
         } else {
@@ -341,19 +344,60 @@ private fun ChatsScreen(user: String, friends: List<String>, prefs: android.cont
 }
 
 @Composable
-private fun ConversationScreen(title: String, storageKey: String, prefs: android.content.SharedPreferences, onBack: () -> Unit) {
+private fun ConversationScreen(
+    title: String,
+    storageKey: String,
+    prefs: android.content.SharedPreferences,
+    token: String,
+    friendId: String,
+    onBack: () -> Unit
+) {
     var raw by remember(storageKey) { mutableStateOf(prefs.getString(storageKey, "[]") ?: "[]") }
     var message by remember { mutableStateOf("") }
-    val messages = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
+    var conversationId by remember { mutableStateOf("") }
+    var connectionError by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
+
+    LaunchedEffect(token, friendId) {
+        if (token.isNotBlank() && friendId.isNotBlank()) {
+            try {
+                conversationId = withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }
+                val remote = withContext(Dispatchers.IO) { GreenCallApi.getMessages(token, conversationId) }
+                val normalized = JSONArray()
+                val myId = prefs.getString("user_id", "") ?: ""
+                for (i in 0 until remote.length()) {
+                    val item = remote.getJSONObject(i)
+                    normalized.put(JSONObject()
+                        .put("text", item.optString("body"))
+                        .put("mine", item.optString("sender_id") == myId)
+                        .put("time", item.optString("created_at")))
+                }
+                messages = normalized
+                raw = normalized.toString()
+                prefs.edit().putString(storageKey, raw).apply()
+                connectionError = ""
+            } catch (error: Exception) {
+                connectionError = error.message ?: "Unable to load this conversation."
+            }
+        } else {
+            connectionError = "This friend is not linked to a server account yet."
+        }
+        loading = false
+    }
+
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(Modifier.fillMaxWidth().background(Color.White).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
             Avatar(title); Spacer(Modifier.width(10.dp))
-            Column { Text(title, color = Ink, fontWeight = FontWeight.Bold); Text("Conversation", color = Muted, fontSize = 11.sp) }
+            Column { Text(title, color = Ink, fontWeight = FontWeight.Bold); Text(if (conversationId.isNotBlank()) "Synced with GreenCall" else "Connecting…", color = Muted, fontSize = 11.sp) }
         }
-        if (messages.length() == 0) {
+        if (loading && messages.length() == 0) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Leaf) }
+        } else if (messages.length() == 0) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                EmptyState(Icons.Default.ChatBubbleOutline, "Start the conversation", "Messages you write will be saved on this phone.")
+                EmptyState(Icons.Default.ChatBubbleOutline, "Start the conversation", "Your messages sync through GreenCall.")
             }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -362,24 +406,41 @@ private fun ConversationScreen(title: String, storageKey: String, prefs: android
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
                         Column(Modifier.widthIn(max = 290.dp).background(if (mine) Mint else Color.White, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
                             Text(item.optString("text"), color = Ink, fontSize = 14.sp)
-                            Text(if (mine) "You · saved locally" else title, color = Muted, fontSize = 9.sp)
+                            Text(if (mine) "You" else title, color = Muted, fontSize = 9.sp)
                         }
                     }
                 }
             }
         }
+        if (connectionError.isNotBlank()) Text(connectionError, Modifier.padding(horizontal = 12.dp), color = Color(0xFFB33A2B), fontSize = 10.sp)
         Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Write a message…") }, maxLines = 4)
             IconButton(onClick = {
-                if (message.isNotBlank()) {
-                    messages.put(JSONObject().put("text", message.trim()).put("mine", true).put("time", System.currentTimeMillis()))
-                    raw = messages.toString()
-                    prefs.edit().putString(storageKey, raw).apply()
+                val body = message.trim()
+                if (body.isNotBlank() && conversationId.isNotBlank()) {
                     message = ""
+                    scope.launch {
+                        try {
+                            val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, body) }
+                            val updated = JSONArray(messages.toString()).put(JSONObject()
+                                .put("text", sent.optString("body", body))
+                                .put("mine", true)
+                                .put("time", sent.optString("created_at")))
+                            messages = updated
+                            raw = updated.toString()
+                            prefs.edit().putString(storageKey, raw).apply()
+                            connectionError = ""
+                        } catch (error: Exception) {
+                            message = body
+                            connectionError = error.message ?: "Message was not sent. Check your connection."
+                        }
+                    }
+                } else if (body.isNotBlank()) {
+                    connectionError = "Connect to GreenCall before sending."
                 }
-            }) { Icon(Icons.Default.Send, null, tint = Forest) }
+            }, enabled = conversationId.isNotBlank()) { Icon(Icons.Default.Send, null, tint = Forest) }
         }
-        Text("Saved on this device · delivery to other phones needs the online service", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
+        Text("Messages are stored on the GreenCall server when sent.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
     }
 }
 
