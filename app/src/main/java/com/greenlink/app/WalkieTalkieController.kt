@@ -115,6 +115,7 @@ class WalkieTalkieController(
         synchronized(audioBytes) { audioBytes.reset() }
         recorder = input
         startedAt = System.currentTimeMillis()
+        liveStream = true
         socket?.emit("voice:start", JSONObject().put("conversationId", conversationId))
         try {
             input.startRecording()
@@ -157,7 +158,6 @@ class WalkieTalkieController(
 
     fun stopTalking() {
         if (!recording.getAndSet(false)) return
-        liveStream = true
         val bytes = synchronized(audioBytes) { audioBytes.toByteArray() }
         val duration = (System.currentTimeMillis() - startedAt).coerceIn(0, 25000).toInt()
         if (bytes.isNotEmpty()) {
