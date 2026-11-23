@@ -279,7 +279,7 @@ class NearbyTransport(
             if (audio.isNotEmpty() && offlineNames.isNotEmpty()) {
                 val duration = (audio.size / 32).coerceIn(1, 25000)
                 val recordingId = java.util.UUID.randomUUID().toString()
-                offlineNames.forEach { savePendingVoice(it, audio, duration, recordingId) }
+                offlineNames.forEach { savePendingVoice(it, audio, duration, recordingId, liveNames.isEmpty()) }
                 onStatus("Voice saved for ${offlineNames.size} friend(s) until nearby")
             } else if (audio.isNotEmpty()) {
                 onStatus("Nearby voice sent")
@@ -293,13 +293,14 @@ class NearbyTransport(
         if (recording.getAndSet(false)) onStatus("Saving nearby voice…")
     }
 
-    private fun savePendingVoice(target: String, audio: ByteArray, durationMs: Int, recordingId: String) {
+    private fun savePendingVoice(target: String, audio: ByteArray, durationMs: Int, recordingId: String, serverSyncAllowed: Boolean) {
         val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
         val item = JSONObject()
             .put("id", recordingId)
             .put("target", target)
             .put("audioBase64", Base64.encodeToString(audio, Base64.NO_WRAP))
             .put("durationMs", durationMs)
+            .put("serverSyncAllowed", serverSyncAllowed)
         saved.put(item)
         outbox.edit().putString("pending", saved.toString()).apply()
     }
@@ -313,7 +314,9 @@ class NearbyTransport(
             val grouped = linkedMapOf<String, JSONObject>()
             for (index in 0 until saved.length()) {
                 val item = saved.optJSONObject(index) ?: continue
-                if (!grouped.containsKey(item.optString("id"))) grouped[item.optString("id")] = item
+                if (item.optBoolean("serverSyncAllowed") && !grouped.containsKey(item.optString("id"))) {
+                    grouped[item.optString("id")] = item
+                }
             }
             for ((recordingId, item) in grouped) {
                 try {
