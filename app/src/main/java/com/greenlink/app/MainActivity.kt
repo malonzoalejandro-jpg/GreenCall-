@@ -148,7 +148,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                     val groupName = selected.removePrefix("Group: ")
                     val savedPeers = runCatching { JSONArray(prefs.getString("group_nearby_peers_${account}_${groupName}", "[]") ?: "[]") }.getOrElse { JSONArray() }
                     (0 until savedPeers.length()).map { savedPeers.optString(it) }.filter { it.isNotBlank() }.toSet()
-                } else setOf(prefs.getString("display_${account}_${selected}", selected) ?: selected),
+                } else setOf(selected),
                 friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
                 conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
                 muted = muted,
