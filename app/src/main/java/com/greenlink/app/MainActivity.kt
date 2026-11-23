@@ -38,6 +38,7 @@ import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 private val Forest = Color(0xFF123D2B)
 private val Leaf = Color(0xFF35C982)
@@ -398,6 +399,11 @@ private fun ConversationScreen(
                         .put("mine", item.optString("sender_id") == myId)
                         .put("time", item.optString("created_at")))
                 }
+                val cached = runCatching { JSONArray(prefs.getString(storageKey, "[]") ?: "[]") }.getOrElse { JSONArray() }
+                for (i in 0 until cached.length()) {
+                    val pending = cached.optJSONObject(i)
+                    if (pending?.optBoolean("pending") == true) normalized.put(pending)
+                }
                 messages = normalized
                 raw = normalized.toString()
                 prefs.edit().putString(storageKey, raw).apply()
@@ -490,7 +496,7 @@ private fun ConversationScreen(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
                         Column(Modifier.widthIn(max = 290.dp).background(if (mine) Mint else Color.White, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
                             Text(item.optString("text"), color = Ink, fontSize = 14.sp)
-                            Text(if (mine) "You" else title, color = Muted, fontSize = 9.sp)
+                            Text(if (item.optBoolean("pending")) "Pending · will retry when online" else if (mine) "You" else title, color = Muted, fontSize = 9.sp)
                         }
                     }
                 }
@@ -529,6 +535,30 @@ private fun ConversationScreen(
                 }
             }
         }
+        val pendingItems = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
+        if (pendingItems.isNotEmpty()) {
+            TextButton(onClick = {
+                scope.launch {
+                    for (pending in pendingItems) {
+                        try {
+                            val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, pending.optString("text")) }
+                            val updated = JSONArray()
+                            for (i in 0 until messages.length()) {
+                                val item = messages.getJSONObject(i)
+                                if (item.optString("id") != pending.optString("id")) updated.put(item)
+                            }
+                            updated.put(JSONObject().put("id", sent.optString("id")).put("text", sent.optString("body"))
+                                .put("mine", true).put("time", sent.optString("created_at")))
+                            messages = updated
+                            raw = updated.toString()
+                            prefs.edit().putString(storageKey, raw).apply()
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+                }
+            }, Modifier.align(Alignment.CenterHorizontally)) { Text("Retry ${pendingItems.size} queued message(s)") }
+        }
         Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Write a message…") }, maxLines = 4)
             IconButton(onClick = {
@@ -548,8 +578,16 @@ private fun ConversationScreen(
                             prefs.edit().putString(storageKey, raw).apply()
                             connectionError = ""
                         } catch (error: Exception) {
-                            message = body
-                            connectionError = error.message ?: "Message was not sent. Check your connection."
+                            val queued = JSONArray(messages.toString()).put(JSONObject()
+                                .put("id", "pending-${System.currentTimeMillis()}")
+                                .put("text", body)
+                                .put("mine", true)
+                                .put("pending", true)
+                                .put("time", System.currentTimeMillis().toString()))
+                            messages = queued
+                            raw = queued.toString()
+                            prefs.edit().putString(storageKey, raw).apply()
+                            connectionError = "Saved on this device. It will stay pending until you retry online."
                         }
                     }
                 } else if (body.isNotBlank()) {
@@ -663,7 +701,7 @@ private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> 
                     Switch(muted, setMuted)
                 }
             }
-            Text("Accounts, contacts, groups and messages currently stay on this device. Cross-device sync and live voice require the GreenCall server and nearby transport.", color = Muted, fontSize = 12.sp)
+            Text("Your account, contacts, groups, and sent messages sync through the GreenCall server. Nearby no-internet mode is a separate feature and is not enabled yet.", color = Muted, fontSize = 12.sp)
             OutlinedButton(onClick = signOut, Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(8.dp)); Text("Sign out") }
         }
     }
