@@ -42,6 +42,7 @@ class NearbyTransport(
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
     private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_outbox", Context.MODE_PRIVATE)
+    private val textOutbox = appContext.getSharedPreferences("greencall_nearby_text_outbox", Context.MODE_PRIVATE)
     private val endpointNames = ConcurrentHashMap<String, String>()
     private val serviceId = "com.greencall.app.nearby"
     private val strategy = Strategy.P2P_CLUSTER
@@ -139,6 +140,7 @@ class NearbyTransport(
             if (result.status.isSuccess) {
                 connected.add(endpointId)
                 deliverPendingVoice(endpointId, endpointNames[endpointId].orEmpty())
+                deliverPendingTexts(endpointId, endpointNames[endpointId].orEmpty())
                 onStatus("Nearby connected · ${connected.size} device(s)")
             } else onStatus("Nearby connection failed")
         }
@@ -178,10 +180,55 @@ class NearbyTransport(
 
     fun sendText(text: String): Boolean {
         if (connected.isEmpty() || text.isBlank()) return false
-        val packet = JSONObject().put("type", "text").put("text", text)
-            .put("sender", displayName).put("sentAt", System.currentTimeMillis())
-        sendFrame(0x10, packet.toString().toByteArray(StandardCharsets.UTF_8))
+        val packet = JSONObject().put("type", "text").put("id", java.util.UUID.randomUUID().toString())
+            .put("text", text).put("sender", displayName).put("sentAt", System.currentTimeMillis())
+        val bytes = byteArrayOf(0x10) + packet.toString().toByteArray(StandardCharsets.UTF_8)
+        val activeNames = connected.mapNotNull { endpointNames[it] }.toSet()
+        expectedPeerNames.filter { expected -> activeNames.none { it.equals(expected, ignoreCase = true) } }
+            .forEach { savePendingText(it, text) }
+        connected.forEach { endpointId ->
+            val peer = endpointNames[endpointId].orEmpty()
+            client.sendPayload(endpointId, Payload.fromBytes(bytes))
+                .addOnFailureListener {
+                    if (peer.isNotBlank()) savePendingText(peer, text)
+                    onStatus("Nearby message saved for retry")
+                }
+        }
         return true
+    }
+
+    private fun savePendingText(target: String, text: String) {
+        if (target.isBlank() || text.isBlank()) return
+        val saved = runCatching { JSONArray(textOutbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        if ((0 until saved.length()).any { saved.optJSONObject(it)?.optString("target") == target &&
+                saved.optJSONObject(it)?.optString("text") == text }) return
+        saved.put(JSONObject().put("id", java.util.UUID.randomUUID().toString())
+            .put("target", target).put("text", text))
+        textOutbox.edit().putString("pending", saved.toString()).apply()
+    }
+
+    private fun deliverPendingTexts(endpointId: String, peerName: String) {
+        if (peerName.isBlank()) return
+        val saved = runCatching { JSONArray(textOutbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        for (index in 0 until saved.length()) {
+            val item = saved.optJSONObject(index) ?: continue
+            if (!item.optString("target").equals(peerName, ignoreCase = true)) continue
+            val packet = JSONObject().put("type", "text").put("id", item.optString("id"))
+                .put("text", item.optString("text")).put("sender", displayName)
+                .put("sentAt", System.currentTimeMillis())
+            val bytes = byteArrayOf(0x10) + packet.toString().toByteArray(StandardCharsets.UTF_8)
+            client.sendPayload(endpointId, Payload.fromBytes(bytes))
+                .addOnSuccessListener {
+                    val current = runCatching { JSONArray(textOutbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                    val remaining = JSONArray()
+                    for (i in 0 until current.length()) {
+                        val candidate = current.optJSONObject(i) ?: continue
+                        if (candidate.optString("id") != item.optString("id")) remaining.put(candidate)
+                    }
+                    textOutbox.edit().putString("pending", remaining.toString()).apply()
+                }
+                .addOnFailureListener { onStatus("Queued nearby text will retry") }
+        }
     }
 
     fun startTalking(): Boolean {
