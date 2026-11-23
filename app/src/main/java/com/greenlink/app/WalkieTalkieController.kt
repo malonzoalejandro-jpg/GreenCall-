@@ -90,6 +90,8 @@ class WalkieTalkieController(
         }
     }
 
+    fun isConnected(): Boolean = socket?.connected() == true
+
     fun setMuted(value: Boolean) {
         muted = value
         socket?.emit("voice:mute", JSONObject().put("muted", value))
