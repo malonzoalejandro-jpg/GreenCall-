@@ -504,6 +504,13 @@ private fun ConversationScreen(
     }
     fun retryPendingMessages() {
         scope.launch {
+            if (conversationId.startsWith("nearby-") && token.isNotBlank() && friendId.isNotBlank()) {
+                runCatching {
+                    val serverConversation = withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }
+                    conversationId = serverConversation
+                    prefs.edit().putString("conversation_${storageKey}", serverConversation).apply()
+                }
+            }
             val queued = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
             for (pending in queued) {
                 try {
