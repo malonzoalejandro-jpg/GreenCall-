@@ -715,12 +715,22 @@ private fun ConversationScreen(
                 Box(
                     Modifier.fillMaxWidth().height(58.dp)
                         .background(if (receivingVoice) Color(0xFFDBEDE3) else Forest, RoundedCornerShape(16.dp))
-                        .pointerInput(voiceController, muted, micGranted) {
+                        .pointerInput(voiceController, nearbyTransport, nearbyEnabled, muted, micGranted, conversationId) {
                             detectTapGestures(onPress = {
-                                val started = voiceController?.startTalking() == true
+                                val useNearby = nearbyEnabled && nearbyTransport.hasPeers()
+                                val started = if (useNearby) {
+                                    nearbyTransport.startTalking()
+                                } else {
+                                    voiceController?.startTalking() == true
+                                }
                                 if (started) {
+                                    nearbyTalking = useNearby
                                     tryAwaitRelease()
-                                    voiceController?.stopTalking()
+                                    if (useNearby) nearbyTransport.stopTalking()
+                                    else voiceController?.stopTalking()
+                                    nearbyTalking = false
+                                } else if (nearbyEnabled && !nearbyTransport.hasPeers() && conversationId.startsWith("nearby-")) {
+                                    voiceStatus = "Waiting for your friend to connect nearby"
                                 }
                             })
                         },
@@ -779,7 +789,7 @@ private fun ConversationScreen(
                 }
             }, enabled = conversationId.isNotBlank()) { Icon(Icons.Default.Send, null, tint = Forest) }
         }
-        Text("Text messages sync live. Voice notes are saved for muted or offline friends.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
+        Text("Hold to talk: nearby radio when connected, otherwise internet voice. Muted nearby voice is saved on this device.", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
     }
 
     if (showVoicemails) {
@@ -798,11 +808,16 @@ private fun ConversationScreen(
                             IconButton(onClick = {
                                 scope.launch {
                                     try {
-                                        val audio = withContext(Dispatchers.IO) { GreenCallApi.getVoicemailAudio(token, item.optString("id")) }
-                                        voiceController?.playVoicemail(audio)
-                                        val refreshed = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
-                                        voicemailList = (0 until refreshed.length()).map { refreshed.getJSONObject(it) }
-                                        voicemailCount = voicemailList.size
+                                        if (item.optBoolean("local")) {
+                                            voiceController?.playVoicemail(item.optString("audioBase64"))
+                                        } else {
+                                            val audio = withContext(Dispatchers.IO) { GreenCallApi.getVoicemailAudio(token, item.optString("id")) }
+                                            voiceController?.playVoicemail(audio)
+                                            val refreshed = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
+                                            val local = voicemailList.filter { it.optBoolean("local") }
+                                            voicemailList = local + (0 until refreshed.length()).map { refreshed.getJSONObject(it) }
+                                            voicemailCount = voicemailList.size
+                                        }
                                     } catch (error: Exception) { connectionError = error.message ?: "Could not play voicemail." }
                                 }
                             }) { Icon(Icons.Default.PlayArrow, null, tint = Forest) }
