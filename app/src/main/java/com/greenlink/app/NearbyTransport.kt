@@ -2,6 +2,7 @@ package com.greenlink.app
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.util.Base64
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
@@ -16,6 +17,7 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
@@ -37,7 +39,10 @@ class NearbyTransport(
     private val onIncomingVoice: (Boolean) -> Unit,
     private val onVoiceMail: (ByteArray, Int) -> Unit
 ) {
-    private val client = Nearby.getConnectionsClient(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val client = Nearby.getConnectionsClient(appContext)
+    private val outbox = appContext.getSharedPreferences("greencall_nearby_voice_outbox", Context.MODE_PRIVATE)
+    private val endpointNames = ConcurrentHashMap<String, String>()
     private val serviceId = "com.greencall.app.nearby"
     private val strategy = Strategy.P2P_CLUSTER
     private val connected = ConcurrentHashMap.newKeySet<String>()
@@ -93,6 +98,11 @@ class NearbyTransport(
                         onIncomingVoice(false)
                     }
                 }
+                0x04.toByte() -> runCatching {
+                    val packet = JSONObject(String(bytes, 1, bytes.size - 1, StandardCharsets.UTF_8))
+                    val audio = Base64.decode(packet.optString("audioBase64"), Base64.DEFAULT)
+                    if (audio.isNotEmpty()) onVoiceMail(audio, packet.optInt("durationMs"))
+                }.onFailure { onStatus("Could not receive queued nearby voice message") }
             }
         }
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
@@ -100,6 +110,7 @@ class NearbyTransport(
 
     private val lifecycle = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
+            endpointNames[endpointId] = info.endpointName
             if (expectedPeerNames.none { it.equals(info.endpointName, ignoreCase = true) }) {
                 client.rejectConnection(endpointId)
                 return
@@ -110,11 +121,13 @@ class NearbyTransport(
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             if (result.status.isSuccess) {
                 connected.add(endpointId)
+                deliverPendingVoice(endpointId, endpointNames[endpointId].orEmpty())
                 onStatus("Nearby connected · ${connected.size} device(s)")
             } else onStatus("Nearby connection failed")
         }
         override fun onDisconnected(endpointId: String) {
             connected.remove(endpointId)
+            endpointNames.remove(endpointId)
             onStatus(if (connected.isEmpty()) "Searching nearby devices…" else "Nearby connected · ${connected.size} device(s)")
         }
     }
@@ -155,7 +168,7 @@ class NearbyTransport(
     }
 
     fun startTalking(): Boolean {
-        if (connected.isEmpty() || !recording.compareAndSet(false, true)) return false
+        if (!recording.compareAndSet(false, true)) return false
         val minSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minSize <= 0) { recording.set(false); onStatus("Microphone unavailable"); return false }
         val input = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate,
@@ -170,6 +183,7 @@ class NearbyTransport(
             input.release(); recording.set(false); onStatus("Microphone could not start"); return false
         }
         recorder = input
+        val recorded = ByteArrayOutputStream()
         sendFrame(0x01)
         thread(name = "GreenCallNearbyMic") {
             val buffer = ByteArray(4096)
@@ -177,6 +191,7 @@ class NearbyTransport(
             while (recording.get() && sentBytes < 800000) {
                 val count = input.read(buffer, 0, minOf(buffer.size, 800000 - sentBytes))
                 if (count > 0) {
+                    recorded.write(buffer, 0, count)
                     sendFrame(0x02, buffer.copyOf(count))
                     sentBytes += count
                 }
@@ -184,16 +199,62 @@ class NearbyTransport(
             runCatching { input.stop() }
             input.release()
             if (recorder === input) recorder = null
-            if (recording.getAndSet(false)) sendFrame(0x03)
+            recording.set(false)
+            sendFrame(0x03)
+            val audio = recorded.toByteArray()
+            val liveNames = connected.mapNotNull { endpointNames[it] }.toSet()
+            val offlineNames = expectedPeerNames.filter { expected ->
+                liveNames.none { it.equals(expected, ignoreCase = true) }
+            }
+            if (audio.isNotEmpty() && offlineNames.isNotEmpty()) {
+                val duration = (audio.size / 32).coerceIn(1, 25000)
+                offlineNames.forEach { savePendingVoice(it, audio, duration) }
+                onStatus("Voice saved for ${offlineNames.size} friend(s) until nearby")
+            } else if (audio.isNotEmpty()) {
+                onStatus("Nearby voice sent")
+            }
         }
-        onStatus("Nearby voice · talking")
+        onStatus(if (connected.isEmpty()) "Recording offline voice message…" else "Nearby voice · talking")
         return true
     }
 
     fun stopTalking() {
-        if (recording.getAndSet(false)) {
-            sendFrame(0x03)
-            onStatus("Nearby voice sent")
+        if (recording.getAndSet(false)) onStatus("Saving nearby voice…")
+    }
+
+    private fun savePendingVoice(target: String, audio: ByteArray, durationMs: Int) {
+        val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        val item = JSONObject()
+            .put("id", "${System.currentTimeMillis()}-${audio.size}")
+            .put("target", target)
+            .put("audioBase64", Base64.encodeToString(audio, Base64.NO_WRAP))
+            .put("durationMs", durationMs)
+        saved.put(item)
+        outbox.edit().putString("pending", saved.toString()).apply()
+    }
+
+    private fun deliverPendingVoice(endpointId: String, peerName: String) {
+        if (peerName.isBlank()) return
+        val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        for (index in 0 until saved.length()) {
+            val item = saved.optJSONObject(index) ?: continue
+            if (!item.optString("target").equals(peerName, ignoreCase = true)) continue
+            val packet = JSONObject()
+                .put("audioBase64", item.optString("audioBase64"))
+                .put("durationMs", item.optInt("durationMs"))
+            val bytes = byteArrayOf(0x04) + packet.toString().toByteArray(StandardCharsets.UTF_8)
+            client.sendPayload(endpointId, Payload.fromBytes(bytes))
+                .addOnSuccessListener {
+                    val current = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                    val remaining = JSONArray()
+                    for (i in 0 until current.length()) {
+                        val candidate = current.optJSONObject(i) ?: continue
+                        if (candidate.optString("id") != item.optString("id")) remaining.put(candidate)
+                    }
+                    outbox.edit().putString("pending", remaining.toString()).apply()
+                    onStatus("Queued nearby voice delivered")
+                }
+                .addOnFailureListener { onStatus("Queued nearby voice will retry") }
         }
     }
 
@@ -226,6 +287,7 @@ class NearbyTransport(
         runCatching { client.stopDiscovery() }
         runCatching { client.stopAllEndpoints() }
         connected.clear()
+        endpointNames.clear()
         stopPlayback()
     }
 }
