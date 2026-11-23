@@ -54,8 +54,8 @@ private fun parseArray(raw: String): List<String> = runCatching {
 
 @Composable
 private fun GreenCallApp(prefs: android.content.SharedPreferences) {
-    var account by remember { mutableStateOf(prefs.getString("session", "") ?: "") }
     var token by remember { mutableStateOf(prefs.getString("token", "") ?: "") }
+    var account by remember { mutableStateOf(if (token.isNotBlank()) prefs.getString("session", "") ?: "" else "") }
     val scope = rememberCoroutineScope()
     var authPage by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf("") }
