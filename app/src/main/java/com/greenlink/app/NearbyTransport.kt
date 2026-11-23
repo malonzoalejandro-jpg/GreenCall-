@@ -30,7 +30,7 @@ import kotlin.concurrent.thread
 class NearbyTransport(
     context: Context,
     private val displayName: String,
-    private val expectedPeerName: String,
+    private val expectedPeerNames: Set<String>,
     private val isMuted: () -> Boolean,
     private val onStatus: (String) -> Unit,
     private val onText: (JSONObject) -> Unit,
@@ -100,7 +100,7 @@ class NearbyTransport(
 
     private val lifecycle = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            if (!info.endpointName.equals(expectedPeerName, ignoreCase = true)) {
+            if (expectedPeerNames.none { it.equals(info.endpointName, ignoreCase = true) }) {
                 client.rejectConnection(endpointId)
                 return
             }
@@ -121,7 +121,7 @@ class NearbyTransport(
 
     private val discovery = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-            if (info.endpointName.equals(expectedPeerName, ignoreCase = true) && endpointId !in connected) {
+            if (expectedPeerNames.any { it.equals(info.endpointName, ignoreCase = true) } && endpointId !in connected) {
                 client.requestConnection(displayName.take(32), endpointId, lifecycle)
                     .addOnFailureListener { onStatus("Could not connect to nearby device") }
             }
@@ -130,7 +130,7 @@ class NearbyTransport(
     }
 
     fun start() {
-        if (expectedPeerName.isBlank()) {
+        if (expectedPeerNames.isEmpty()) {
             onStatus("Nearby direct mode needs a selected friend")
             return
         }
