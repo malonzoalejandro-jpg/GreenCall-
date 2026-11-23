@@ -579,7 +579,9 @@ private fun ConversationScreen(
         if (token.isNotBlank() && conversationId.isNotBlank()) {
             runCatching {
                 val list = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
-                voicemailList = (0 until list.length()).map { list.getJSONObject(it) }
+                val local = runCatching { JSONArray(prefs.getString("local_voicemail_${currentUser}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                voicemailList = (0 until local.length()).mapNotNull { local.optJSONObject(it) } +
+                    (0 until list.length()).map { list.getJSONObject(it) }
                 voicemailCount = voicemailList.size
             }
         }
@@ -597,7 +599,9 @@ private fun ConversationScreen(
                 scope.launch {
                     try {
                         val list = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
-                        voicemailList = (0 until list.length()).map { list.getJSONObject(it) }
+                        val local = runCatching { JSONArray(prefs.getString("local_voicemail_${currentUser}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                        voicemailList = (0 until local.length()).mapNotNull { local.optJSONObject(it) } +
+                            (0 until list.length()).map { list.getJSONObject(it) }
                         voicemailCount = voicemailList.size
                         showVoicemails = true
                     } catch (error: Exception) { connectionError = error.message ?: "Could not load voicemails." }
