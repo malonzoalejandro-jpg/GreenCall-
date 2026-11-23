@@ -42,56 +42,68 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun hash(value: String): String = MessageDigest.getInstance("SHA-256")
+private fun digest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+private fun parseArray(raw: String): List<String> = runCatching {
+    val a = JSONArray(raw); (0 until a.length()).map { a.getString(it) }
+}.getOrDefault(emptyList())
 
 @Composable
 private fun GreenCallApp(prefs: android.content.SharedPreferences) {
-    var username by remember { mutableStateOf(prefs.getString("session", "") ?: "") }
+    var account by remember { mutableStateOf(prefs.getString("session", "") ?: "") }
+    var authPage by remember { mutableStateOf(false) }
+    var authError by remember { mutableStateOf("") }
     var tab by remember { mutableIntStateOf(0) }
-    var page by remember { mutableStateOf("login") }
-    var notice by remember { mutableStateOf("") }
-    var friends by remember { mutableStateOf(prefs.getString("friends", "[]") ?: "[]") }
-    var groups by remember { mutableStateOf(prefs.getString("groups", "[]") ?: "[]") }
-    var chats by remember { mutableStateOf(prefs.getString("chats", "[]") ?: "[]") }
-    var selectedChat by remember { mutableStateOf("") }
+    var friends by remember { mutableStateOf(emptyList<String>()) }
+    var groups by remember { mutableStateOf(emptyList<String>()) }
+    var selected by remember { mutableStateOf("") }
     var muted by remember { mutableStateOf(false) }
 
-    fun save(key: String, value: String) { prefs.edit().putString(key, value).apply() }
-    fun array(raw: String): List<String> = runCatching {
-        val a = JSONArray(raw); (0 until a.length()).map { a.getString(it) }
-    }.getOrDefault(emptyList())
-    fun persistFriends(v: List<String>) { friends = JSONArray(v).toString(); save("friends", friends) }
-    fun persistGroups(v: List<String>) { groups = JSONArray(v).toString(); save("groups", groups) }
-    fun persistChats(v: List<String>) { chats = JSONArray(v).toString(); save("chats", chats) }
+    fun loadUserData(user: String) {
+        friends = parseArray(prefs.getString("friends_$user", "[]") ?: "[]")
+        groups = parseArray(prefs.getString("groups_$user", "[]") ?: "[]")
+    }
+    fun saveFriends(values: List<String>) {
+        friends = values.distinct()
+        prefs.edit().putString("friends_$account", JSONArray(friends).toString()).apply()
+    }
+    fun saveGroups(values: List<String>) {
+        groups = values.distinct()
+        prefs.edit().putString("groups_$account", JSONArray(groups).toString()).apply()
+    }
+
+    LaunchedEffect(account) { if (account.isNotBlank()) loadUserData(account) }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Forest, secondary = Leaf, background = Bg)) {
-        if (username.isBlank()) {
-            AuthScreen(page, { page = it }, notice, { notice = it },
-                onAuth = { name, email, password, register ->
-                    val clean = email.trim().lowercase()
-                    if (!android.util.Patterns.EMAIL_ADDRESS.matcher(clean).matches()) {
-                        notice = "Enter a valid email address."
-                    } else if (password.length < 8) {
-                        notice = "Password must be at least 8 characters."
-                    } else {
-                        val accounts = prefs.getString("accounts", "{}") ?: "{}"
-                        val db = runCatching { JSONObject(accounts) }.getOrElse { JSONObject() }
-                        if (register && db.has(clean)) notice = "An account with this email already exists."
-                        else if (!register && (!db.has(clean) || db.optString(clean) != hash(password))) {
-                            notice = "Email or password is incorrect."
-                        } else {
-                            if (register) db.put(clean, hash(password))
-                            prefs.edit().putString("accounts", db.toString()).putString("session", name.ifBlank { clean.substringBefore("@") }).apply()
-                            username = name.ifBlank { clean.substringBefore("@") }
-                            notice = ""
-                        }
+        if (account.isBlank()) {
+            AuthScreen(authPage, authError, { authError = "" }, { name, handle, password, register ->
+                val cleanHandle = handle.trim().removePrefix("@").lowercase()
+                val cleanName = name.trim()
+                val db = runCatching { JSONObject(prefs.getString("accounts", "{}") ?: "{}") }.getOrElse { JSONObject() }
+                when {
+                    cleanHandle.length < 3 || !cleanHandle.matches(Regex("[a-z0-9_]+")) ->
+                        authError = "Username must be 3+ characters (letters, numbers, underscores)."
+                    password.length < 8 -> authError = "Password must be at least 8 characters."
+                    register && cleanName.length < 2 -> authError = "Enter your real display name."
+                    register && db.has(cleanHandle) -> authError = "That username is already taken."
+                    !register && (!db.has(cleanHandle) || db.optJSONObject(cleanHandle)?.optString("password") != digest(password)) ->
+                        authError = "Username or password is incorrect."
+                    else -> {
+                        if (register) db.put(cleanHandle, JSONObject().put("name", cleanName).put("password", digest(password)))
+                        prefs.edit().putString("accounts", db.toString()).putString("session", cleanHandle).apply()
+                        account = cleanHandle
+                        authError = ""
                     }
-                },
-                onGoogle = { notice = "Google sign-in needs the GreenCall OAuth Web Client ID and token-verification backend. Email login is available on this device meanwhile." }
+                }
+            }, { authPage = it })
+        } else if (selected.isNotBlank()) {
+            ConversationScreen(
+                title = selected,
+                storageKey = "messages_${account}_${selected}",
+                prefs = prefs,
+                onBack = { selected = "" }
             )
-        } else if (selectedChat.isNotBlank()) {
-            ConversationScreen(selectedChat, onBack = { selectedChat = "" })
         } else {
             Scaffold(
                 containerColor = Bg,
@@ -105,11 +117,12 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 }
             ) { pad ->
                 when (tab) {
-                    0 -> ChatsScreen(username, array(chats), array(friends), { selectedChat = it }, { persistChats(array(chats) + it) }, pad)
-                    1 -> GroupsScreen(array(groups), { persistGroups(array(groups) + it) }, pad)
-                    2 -> FriendsScreen(array(friends), { persistFriends(array(friends) + it) }, pad)
-                    else -> SettingsScreen(username, muted, { muted = it }, {
-                        prefs.edit().remove("session").apply(); username = ""; page = "login"
+                    0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
+                    1 -> GroupsScreen(groups, friends, ::saveGroups, pad)
+                    2 -> FriendsScreen(friends, prefs, ::saveFriends, pad)
+                    else -> SettingsScreen(account, muted, { muted = it }, {
+                        prefs.edit().remove("session").apply()
+                        account = ""; selected = ""; tab = 0
                     }, pad)
                 }
             }
@@ -118,126 +131,64 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
 }
 
 @Composable
-private fun AuthScreen(page: String, onPage: (String) -> Unit, notice: String, setNotice: (String) -> Unit,
-                       onAuth: (String, String, String, Boolean) -> Unit, onGoogle: () -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    val register = page == "register"
+private fun AuthScreen(register: Boolean, error: String, clearError: () -> Unit,
+                       authenticate: (String, String, String, Boolean) -> Unit, changePage: (Boolean) -> Unit) {
+    var name by remember(register) { mutableStateOf("") }
+    var username by remember(register) { mutableStateOf("") }
+    var password by remember(register) { mutableStateOf("") }
     Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 26.dp), verticalArrangement = Arrangement.Center) {
-        Box(Modifier.size(68.dp).background(Forest, RoundedCornerShape(22.dp)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Waves, null, tint = Leaf, modifier = Modifier.size(38.dp))
-        }
-        Spacer(Modifier.height(26.dp))
-        Text(if (register) "Create your account" else "Welcome to GreenCall", fontSize = 29.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Text(if (register) "Set up your profile to get started." else "Your conversations, wherever you are.", color = Muted)
-        Spacer(Modifier.height(26.dp))
+        BrandMark()
+        Spacer(Modifier.height(25.dp))
+        Text(if (register) "Create your account" else "Welcome back", fontSize = 29.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(if (register) "Choose a name and a unique username." else "Sign in to continue to GreenCall.", color = Muted)
+        Spacer(Modifier.height(24.dp))
         if (register) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Display name") }, singleLine = true)
+            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Your name") }, singleLine = true)
             Spacer(Modifier.height(10.dp))
         }
-        OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("Email") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Username") }, prefix = { Text("@") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
-        if (notice.isNotBlank()) { Spacer(Modifier.height(8.dp)); Text(notice, color = Color(0xFFB33A2B), fontSize = 12.sp) }
+        if (error.isNotBlank()) { Spacer(Modifier.height(9.dp)); Text(error, color = Color(0xFFB33A2B), fontSize = 12.sp) }
         Spacer(Modifier.height(18.dp))
-        Button(onClick = { onAuth(name, email, password, register) }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
+        Button(onClick = { authenticate(name, username, password, register) }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
             Text(if (register) "Create account" else "Sign in", fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(onClick = onGoogle, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
-            Icon(Icons.Default.AccountCircle, null); Spacer(Modifier.width(8.dp)); Text("Continue with Google")
+        TextButton(onClick = { clearError(); changePage(!register) }, Modifier.align(Alignment.CenterHorizontally)) {
+            Text(if (register) "Already registered? Sign in" else "New here? Create an account", color = Forest)
         }
-        TextButton(onClick = { setNotice(""); onPage(if (register) "login" else "register") }, Modifier.align(Alignment.CenterHorizontally)) {
-            Text(if (register) "Already have an account? Sign in" else "New to GreenCall? Create account", color = Forest)
-        }
-        Text("Local account storage on this device. Cloud sync is not connected yet.", color = Muted, fontSize = 11.sp)
+        Text("No email or Google account required.", color = Muted, fontSize = 11.sp)
     }
 }
 
 @Composable
-private fun TopHeader(title: String, subtitle: String) {
+private fun BrandMark() {
+    Box(Modifier.size(66.dp).background(Forest, RoundedCornerShape(21.dp)), contentAlignment = Alignment.Center) {
+        Icon(Icons.Default.Waves, null, tint = Leaf, modifier = Modifier.size(38.dp))
+    }
+}
+
+@Composable
+private fun Header(title: String, subtitle: String) {
     Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 22.dp, vertical = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).background(Forest, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Waves, null, tint = Leaf)
-            }
+            BrandMarkSmall()
             Spacer(Modifier.width(10.dp))
             Text("GreenCall", color = Forest, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
             Spacer(Modifier.weight(1f))
-            Box(Modifier.size(8.dp).background(Leaf, CircleShape))
-            Spacer(Modifier.width(6.dp))
             Text("DEVICE MODE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         }
-        Spacer(Modifier.height(20.dp))
-        Text(title, color = Ink, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(18.dp))
+        Text(title, color = Ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text(subtitle, color = Muted, fontSize = 12.sp)
     }
 }
 
 @Composable
-private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, null, tint = Leaf, modifier = Modifier.size(42.dp))
-        Spacer(Modifier.height(12.dp))
-        Text(title, color = Ink, fontWeight = FontWeight.Bold)
-        Text(subtitle, color = Muted, fontSize = 12.sp)
+private fun BrandMarkSmall() {
+    Box(Modifier.size(35.dp).background(Forest, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
+        Icon(Icons.Default.Waves, null, tint = Leaf)
     }
-}
-
-@Composable
-private fun ChatsScreen(user: String, chats: List<String>, friends: List<String>, open: (String) -> Unit, create: (String) -> Unit, pad: PaddingValues) {
-    var show by remember { mutableStateOf(false) }
-    var target by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(pad)) {
-        TopHeader("Your conversations", "Signed in as $user")
-        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AssistChip(onClick = {}, label = { Text("Offline-ready") }, leadingIcon = { Icon(Icons.Default.WifiOff, null) })
-            AssistChip(onClick = {}, label = { Text("Private by design") }, leadingIcon = { Icon(Icons.Default.Lock, null) })
-        }
-        if (chats.isEmpty()) EmptyState(Icons.Default.ChatBubbleOutline, "No conversations yet", "Add a friend to start your first chat.")
-        else LazyColumn { items(chats) { person ->
-            Row(Modifier.fillMaxWidth().clickable { open(person) }.padding(horizontal = 22.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(person); Spacer(Modifier.width(12.dp)); Text(person, Modifier.weight(1f), color = Ink, fontWeight = FontWeight.SemiBold); Icon(Icons.Default.ChevronRight, null, tint = Muted)
-            }; HorizontalDivider(color = Color(0xFFE8EEE9))
-        } }
-        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.Add, null); Text("New conversation") }
-    }
-    if (show) AlertDialog(onDismissRequest = { show = false }, title = { Text("Start a chat") },
-        text = { Column { Text("Choose a saved friend or enter a username."); Spacer(Modifier.height(8.dp))
-            if (friends.isNotEmpty()) friends.forEach { TextButton(onClick = { create(it); show = false }) { Text(it) } }
-            OutlinedTextField(target, { target = it }, label = { Text("Friend username") }, singleLine = true)
-        } }, confirmButton = { TextButton(onClick = { if (target.isNotBlank()) { create(target.trim()); show = false; target = "" } }) { Text("Create") } },
-        dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
-}
-
-@Composable
-private fun FriendsScreen(friends: List<String>, add: (String) -> Unit, pad: PaddingValues) {
-    var show by remember { mutableStateOf(false) }; var handle by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(pad)) {
-        TopHeader("Friends", "Your saved contacts on this device.")
-        if (friends.isEmpty()) EmptyState(Icons.Default.PersonAddAlt, "Your friend list is empty", "Add a username to save a contact.")
-        else LazyColumn { items(friends) { f -> Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(f); Spacer(Modifier.width(12.dp)); Text(f, color = Ink, fontWeight = FontWeight.SemiBold) } } }
-        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.PersonAdd, null); Text("Add friend") }
-    }
-    if (show) AlertDialog(onDismissRequest = { show = false }, title = { Text("Add a friend") },
-        text = { Column { OutlinedTextField(handle, { handle = it }, label = { Text("Username") }, singleLine = true); Text("This saves a local contact. Sending a real friend request requires the online service.", color = Muted, fontSize = 11.sp) } },
-        confirmButton = { TextButton(onClick = { val v = handle.trim().removePrefix("@"); if (v.isNotBlank() && !friends.contains(v)) add(v); handle = ""; show = false }) { Text("Add") } },
-        dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
-}
-
-@Composable
-private fun GroupsScreen(groups: List<String>, add: (String) -> Unit, pad: PaddingValues) {
-    var show by remember { mutableStateOf(false) }; var title by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(pad)) {
-        TopHeader("Groups", "Create spaces for your people.")
-        if (groups.isEmpty()) EmptyState(Icons.Default.Groups, "No groups yet", "Your groups will appear here after you create one.")
-        else LazyColumn { items(groups) { g -> Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(g); Spacer(Modifier.width(12.dp)); Text(g, color = Ink, fontWeight = FontWeight.SemiBold) } } }
-        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.Add, null); Text("Create group") }
-    }
-    if (show) AlertDialog(onDismissRequest = { show = false }, title = { Text("New group") }, text = { OutlinedTextField(title, { title = it }, label = { Text("Group name") }, singleLine = true) },
-        confirmButton = { TextButton(onClick = { if (title.isNotBlank() && !groups.contains(title.trim())) add(title.trim()); title = ""; show = false }) { Text("Create") } },
-        dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
 }
 
 @Composable
@@ -248,36 +199,182 @@ private fun Avatar(label: String) {
 }
 
 @Composable
-private fun ConversationScreen(person: String, onBack: () -> Unit) {
-    var message by remember { mutableStateOf("") }
-    var sent by remember { mutableStateOf(listOf<String>()) }
-    Column(Modifier.fillMaxSize().background(Bg)) {
-        Row(Modifier.fillMaxWidth().background(Color.White).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }; Avatar(person); Spacer(Modifier.width(10.dp)); Text(person, color = Ink, fontWeight = FontWeight.Bold)
-        }
-        if (sent.isEmpty()) EmptyState(Icons.Default.ChatBubbleOutline, "Say hello", "Your messages will appear here.")
-        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp)) { items(sent) { Text(it, Modifier.padding(5.dp).wrapContentWidth(Alignment.End).background(Mint, RoundedCornerShape(14.dp)).padding(12.dp), color = Ink) } }
-        Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Message") })
-            IconButton(onClick = { if (message.isNotBlank()) { sent = sent + message.trim(); message = "" } }) { Icon(Icons.Default.Send, null, tint = Forest) }
-        }
-        Text("Local preview only · online message delivery is not connected", Modifier.padding(8.dp), color = Muted, fontSize = 10.sp)
+private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 44.dp, horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null, tint = Leaf, modifier = Modifier.size(42.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(title, color = Ink, fontWeight = FontWeight.Bold)
+        Text(subtitle, color = Muted, fontSize = 12.sp)
     }
+}
+
+private fun accountDirectory(prefs: android.content.SharedPreferences) =
+    runCatching { JSONObject(prefs.getString("accounts", "{}") ?: "{}") }.getOrElse { JSONObject() }
+
+@Composable
+private fun FriendsScreen(friends: List<String>, prefs: android.content.SharedPreferences,
+                          save: (List<String>) -> Unit, pad: PaddingValues) {
+    var show by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
+    val directory = accountDirectory(prefs)
+    val matches = (0 until directory.length()).mapNotNull { i ->
+        val key = directory.names()?.optString(i) ?: return@mapNotNull null
+        val profile = directory.optJSONObject(key) ?: return@mapNotNull null
+        Triple(key, profile.optString("name"), profile.optString("name").contains(search.trim(), true))
+    }.filter { search.isNotBlank() && it.third && it.first !in friends }
+    Column(Modifier.fillMaxSize().padding(pad)) {
+        Header("Friends", "Find people by their display name.")
+        if (friends.isEmpty()) EmptyState(Icons.Default.PersonSearch, "No friends added", "Tap Add friend and search their name.")
+        else LazyColumn(Modifier.weight(1f)) {
+            items(friends) { handle ->
+                val display = directory.optJSONObject(handle)?.optString("name")?.takeIf { it.isNotBlank() } ?: handle
+                Row(Modifier.fillMaxWidth().clickable { }.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(display); Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
+                    Icon(Icons.Default.CheckCircle, null, tint = Leaf)
+                }
+                HorizontalDivider(color = Color(0xFFE8EEE9))
+            }
+        }
+        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.PersonAdd, null); Text("Add friend") }
+    }
+    if (show) AlertDialog(onDismissRequest = { show = false; search = ""; result = "" },
+        title = { Text("Find a friend") },
+        text = {
+            Column {
+                Text("Search using the name they registered with, not their @username.", color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(search, { search = it; result = "" }, Modifier.fillMaxWidth(), label = { Text("Person's name") }, singleLine = true)
+                if (matches.isNotEmpty()) matches.forEach { (handle, display, _) ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        save(friends + handle); result = "$display added to your friends."; search = ""
+                    }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(display); Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
+                        Text("Add", color = Forest, fontWeight = FontWeight.Bold)
+                    }
+                } else if (search.isNotBlank()) {
+                    Text("No matching account found on this device.", color = Muted, fontSize = 12.sp)
+                }
+                if (result.isNotBlank()) Text(result, color = Forest, fontSize = 12.sp)
+                Text("Account discovery across different phones needs a shared online server, which is not connected yet.", color = Muted, fontSize = 10.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { show = false; search = ""; result = "" }) { Text("Done") } })
+}
+
+@Composable
+private fun ChatsScreen(user: String, friends: List<String>, prefs: android.content.SharedPreferences,
+                        open: (String) -> Unit, pad: PaddingValues) {
+    val directory = accountDirectory(prefs)
+    Column(Modifier.fillMaxSize().padding(pad)) {
+        Header("Messages", "Signed in as @$user")
+        if (friends.isEmpty()) EmptyState(Icons.Default.ChatBubbleOutline, "No conversations yet", "Add a friend to start a conversation.")
+        else LazyColumn {
+            items(friends) { handle ->
+                val display = directory.optJSONObject(handle)?.optString("name")?.takeIf { it.isNotBlank() } ?: handle
+                val messages = runCatching { JSONArray(prefs.getString("messages_${user}_${handle}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                val last = if (messages.length() > 0) messages.optJSONObject(messages.length()-1)?.optString("text") ?: "No messages yet" else "No messages yet"
+                Row(Modifier.fillMaxWidth().clickable { open(handle) }.padding(horizontal = 20.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(display); Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text(last, color = Muted, fontSize = 12.sp, maxLines = 1) }
+                    Icon(Icons.Default.ChevronRight, null, tint = Muted)
+                }
+                HorizontalDivider(color = Color(0xFFE8EEE9))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationScreen(title: String, storageKey: String, prefs: android.content.SharedPreferences, onBack: () -> Unit) {
+    var raw by remember(storageKey) { mutableStateOf(prefs.getString(storageKey, "[]") ?: "[]") }
+    var message by remember { mutableStateOf("") }
+    val messages = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        Row(Modifier.fillMaxWidth().background(Color.White).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            Avatar(title); Spacer(Modifier.width(10.dp))
+            Column { Text(title, color = Ink, fontWeight = FontWeight.Bold); Text("Conversation", color = Muted, fontSize = 11.sp) }
+        }
+        if (messages.length() == 0) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                EmptyState(Icons.Default.ChatBubbleOutline, "Start the conversation", "Messages you write will be saved on this phone.")
+            }
+        } else {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items((0 until messages.length()).map { messages.getJSONObject(it) }) { item ->
+                    val mine = item.optBoolean("mine")
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+                        Column(Modifier.widthIn(max = 290.dp).background(if (mine) Mint else Color.White, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(item.optString("text"), color = Ink, fontSize = 14.sp)
+                            Text(if (mine) "You · saved locally" else title, color = Muted, fontSize = 9.sp)
+                        }
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Write a message…") }, maxLines = 4)
+            IconButton(onClick = {
+                if (message.isNotBlank()) {
+                    messages.put(JSONObject().put("text", message.trim()).put("mine", true).put("time", System.currentTimeMillis()))
+                    raw = messages.toString()
+                    prefs.edit().putString(storageKey, raw).apply()
+                    message = ""
+                }
+            }) { Icon(Icons.Default.Send, null, tint = Forest) }
+        }
+        Text("Saved on this device · delivery to other phones needs the online service", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun GroupsScreen(groups: List<String>, friends: List<String>, save: (List<String>) -> Unit, pad: PaddingValues) {
+    var show by remember { mutableStateOf(false) }
+    var title by remember { mutableStateOf("") }
+    var selectedMembers by remember { mutableStateOf(setOf<String>()) }
+    Column(Modifier.fillMaxSize().padding(pad)) {
+        Header("Groups", "Create a space for your friends.")
+        if (groups.isEmpty()) EmptyState(Icons.Default.Groups, "No groups yet", "Create a group and choose its members.")
+        else LazyColumn(Modifier.weight(1f)) { items(groups) { group ->
+            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(group); Spacer(Modifier.width(12.dp)); Text(group, color = Ink, fontWeight = FontWeight.SemiBold) }
+        } }
+        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.Add, null); Text("Create group") }
+    }
+    if (show) AlertDialog(onDismissRequest = { show = false }, title = { Text("Create a group") },
+        text = { Column {
+            OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Group name") }, singleLine = true)
+            Spacer(Modifier.height(8.dp)); Text("Add friends", fontWeight = FontWeight.SemiBold)
+            if (friends.isEmpty()) Text("Add friends first to invite them.", color = Muted, fontSize = 12.sp)
+            friends.forEach { friend -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(friend in selectedMembers, { checked -> selectedMembers = if (checked) selectedMembers + friend else selectedMembers - friend })
+                Text("@$friend", color = Ink)
+            } }
+        } },
+        confirmButton = { TextButton(onClick = {
+            if (title.isNotBlank()) save(groups + title.trim())
+            title = ""; selectedMembers = emptySet(); show = false
+        }) { Text("Create") } },
+        dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
 }
 
 @Composable
 private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> Unit, signOut: () -> Unit, pad: PaddingValues) {
     Column(Modifier.fillMaxSize().padding(pad)) {
-        TopHeader("Settings", "Your GreenCall preferences")
+        Header("Settings", "Your GreenCall preferences")
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp)) {
-                Text("Signed in", color = Muted, fontSize = 12.sp); Text(user, color = Ink, fontWeight = FontWeight.Bold)
-            } }
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("Mute walkie-talkie", color = Ink, fontWeight = FontWeight.SemiBold); Text("Save incoming voice clips instead of playing live.", color = Muted, fontSize = 11.sp) }
-                Switch(muted, setMuted)
-            } }
-            Text("Offline contacts and groups are stored on this device. Internet sync, Google authentication, and live voice transport still need the GreenCall service configuration.", color = Muted, fontSize = 12.sp)
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(Modifier.padding(16.dp)) { Text("Username", color = Muted, fontSize = 12.sp); Text("@$user", color = Ink, fontWeight = FontWeight.Bold) }
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text("Mute walkie-talkie", color = Ink, fontWeight = FontWeight.SemiBold); Text("Don't play incoming live voice when muted.", color = Muted, fontSize = 11.sp) }
+                    Switch(muted, setMuted)
+                }
+            }
+            Text("Accounts, contacts, groups and messages currently stay on this device. Cross-device sync and live voice require the GreenCall server and nearby transport.", color = Muted, fontSize = 12.sp)
             OutlinedButton(onClick = signOut, Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(8.dp)); Text("Sign out") }
         }
     }
