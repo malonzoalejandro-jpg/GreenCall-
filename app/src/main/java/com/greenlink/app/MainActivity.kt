@@ -559,7 +559,12 @@ private fun ConversationScreen(
                         for (i in 0 until messages.length()) {
                             val item = messages.getJSONObject(i)
                             if (item.optString("id") == nearby.optString("id")) {
-                                updated.put(JSONObject(item.toString()).put("synced", true).put("serverId", sent.optString("id")))
+                                updated.put(JSONObject(item.toString())
+                                    .put("id", sent.optString("id"))
+                                    .put("text", sent.optString("body", item.optString("text")))
+                                    .put("time", sent.optString("created_at"))
+                                    .put("nearby", false)
+                                    .put("synced", true))
                             } else updated.put(item)
                         }
                         messages = updated
@@ -614,7 +619,11 @@ private fun ConversationScreen(
                 val cached = runCatching { JSONArray(prefs.getString(storageKey, "[]") ?: "[]") }.getOrElse { JSONArray() }
                 for (i in 0 until cached.length()) {
                     val pending = cached.optJSONObject(i)
-                    if (pending?.optBoolean("pending") == true) normalized.put(pending)
+                    if (pending != null && (pending.optBoolean("pending") ||
+                            (pending.optBoolean("nearby") && pending.optBoolean("mine") && !pending.optBoolean("synced")))) {
+                        val duplicate = (0 until normalized.length()).any { normalized.optJSONObject(it)?.optString("id") == pending.optString("id") }
+                        if (!duplicate) normalized.put(pending)
+                    }
                 }
                 messages = normalized
                 raw = normalized.toString()
