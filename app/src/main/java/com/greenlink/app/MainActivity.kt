@@ -549,6 +549,27 @@ private fun ConversationScreen(
                     break
                 }
             }
+            if (!conversationId.startsWith("nearby-")) {
+                val nearbyOutgoing = (0 until messages.length()).map { messages.getJSONObject(it) }
+                    .filter { it.optBoolean("nearby") && it.optBoolean("mine") && !it.optBoolean("synced") && !it.optBoolean("pending") }
+                for (nearby in nearbyOutgoing) {
+                    try {
+                        val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, nearby.optString("text")) }
+                        val updated = JSONArray()
+                        for (i in 0 until messages.length()) {
+                            val item = messages.getJSONObject(i)
+                            if (item.optString("id") == nearby.optString("id")) {
+                                updated.put(JSONObject(item.toString()).put("synced", true).put("serverId", sent.optString("id")))
+                            } else updated.put(item)
+                        }
+                        messages = updated
+                        raw = updated.toString()
+                        prefs.edit().putString(storageKey, raw).apply()
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
+            }
         }
     }
     DisposableEffect(token, conversationId) {
