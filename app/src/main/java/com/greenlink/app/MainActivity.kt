@@ -144,7 +144,11 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 prefs = prefs,
                 token = token,
                 currentUser = account,
-                expectedPeerName = if (selected.startsWith("Group: ")) "" else selected,
+                expectedPeerNames = if (selected.startsWith("Group: ")) {
+                    val groupName = selected.removePrefix("Group: ")
+                    val savedPeers = runCatching { JSONArray(prefs.getString("group_nearby_peers_${account}_${groupName}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                    (0 until savedPeers.length()).map { savedPeers.optString(it) }.filter { it.isNotBlank() }.toSet()
+                } else setOf(prefs.getString("display_${account}_${selected}", selected) ?: selected),
                 friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
                 conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
                 muted = muted,
@@ -364,7 +368,7 @@ private fun ConversationScreen(
     prefs: android.content.SharedPreferences,
     token: String,
     currentUser: String,
-    expectedPeerName: String,
+    expectedPeerNames: Set<String>,
     friendId: String,
     conversationIdOverride: String,
     muted: Boolean,
@@ -399,7 +403,7 @@ private fun ConversationScreen(
         }.toTypedArray()
     }
     val nearbyTransport = remember(storageKey, currentUser) {
-        NearbyTransport(context, currentUser, expectedPeerName,
+        NearbyTransport(context, currentUser, expectedPeerNames,
             isMuted = { muted },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
