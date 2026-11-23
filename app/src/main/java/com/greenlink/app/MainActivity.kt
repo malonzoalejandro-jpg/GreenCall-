@@ -567,6 +567,7 @@ private fun ConversationScreen(
 
     val voiceController = remember(conversationId, token) {
         if (conversationId.isBlank()) null else WalkieTalkieController(
+            context = context,
             token = token,
             conversationId = conversationId,
             muted = muted,
