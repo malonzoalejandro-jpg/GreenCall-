@@ -228,7 +228,8 @@ class NearbyTransport(
                     val remaining = JSONArray()
                     for (i in 0 until current.length()) {
                         val candidate = current.optJSONObject(i) ?: continue
-                        if (candidate.optString("id") != item.optString("id")) remaining.put(candidate)
+                        if (candidate.optString("id") != item.optString("id") ||
+                            !candidate.optString("target").equals(peerName, ignoreCase = true)) remaining.put(candidate)
                     }
                     textOutbox.edit().putString("pending", remaining.toString()).apply()
                 }
