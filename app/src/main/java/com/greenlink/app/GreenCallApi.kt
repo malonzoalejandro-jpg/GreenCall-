@@ -6,7 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object GreenCallApi {
-    const val BASE_URL = "https://greencall-api-v2-production.up.railway.app"
+    const val BASE_URL = "https://greencall-api-live-production.up.railway.app"
 
     fun request(method: String, path: String, token: String? = null, body: JSONObject? = null): JSONObject {
         val connection = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply {
