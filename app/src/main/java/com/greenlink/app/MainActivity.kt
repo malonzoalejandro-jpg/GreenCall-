@@ -166,6 +166,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 prefs = prefs,
                 token = token,
                 currentUser = account,
+                friends = friends,
                 expectedPeerNames = if (selected.startsWith("Group: ")) {
                     val groupName = selected.removePrefix("Group: ")
                     val savedPeers = runCatching { JSONArray(prefs.getString("group_nearby_peers_${account}_${groupName}", "[]") ?: "[]") }.getOrElse { JSONArray() }
@@ -390,6 +391,7 @@ private fun ConversationScreen(
     prefs: android.content.SharedPreferences,
     token: String,
     currentUser: String,
+    friends: List<String>,
     expectedPeerNames: Set<String>,
     friendId: String,
     conversationIdOverride: String,
@@ -407,6 +409,10 @@ private fun ConversationScreen(
     var voicemailList by remember { mutableStateOf(emptyList<JSONObject>()) }
     var showVoicemails by remember { mutableStateOf(false) }
     var nearbyStatus by remember { mutableStateOf("Nearby mode is off") }
+    var nearbyPeers by remember(storageKey) { mutableStateOf(expectedPeerNames) }
+    var showAddMember by remember { mutableStateOf(false) }
+    var addingMember by remember { mutableStateOf(false) }
+    var memberError by remember { mutableStateOf("") }
     var nearbyIncoming by remember { mutableStateOf<JSONObject?>(null) }
     var nearbyEnabled by remember { mutableStateOf(false) }
     var nearbyTalking by remember { mutableStateOf(false) }
@@ -425,8 +431,8 @@ private fun ConversationScreen(
             if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }.toTypedArray()
     }
-    val nearbyTransport = remember(storageKey, currentUser) {
-        NearbyTransport(context, currentUser, storageKey, expectedPeerNames,
+    val nearbyTransport = remember(storageKey, currentUser, nearbyPeers) {
+        NearbyTransport(context, currentUser, storageKey, nearbyPeers,
             isMuted = { mutedState },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
@@ -469,6 +475,9 @@ private fun ConversationScreen(
     }
     DisposableEffect(nearbyTransport) {
         onDispose { nearbyTransport.stop() }
+    }
+    LaunchedEffect(nearbyTransport, nearbyEnabled) {
+        if (nearbyEnabled) nearbyTransport.start()
     }
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
     LaunchedEffect(nearbyStatus) {
@@ -711,6 +720,12 @@ private fun ConversationScreen(
             Column(Modifier.weight(1f)) {
                 Text(title, color = Ink, fontWeight = FontWeight.Bold)
                 Text(if (nearbyEnabled) "Nearby device mode active" else if (conversationId.isNotBlank()) "GreenCall voice channel" else "Offline conversation", color = Muted, fontSize = 11.sp)
+            }
+            if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
+                TextButton(onClick = { memberError = ""; showAddMember = true }) {
+                    Icon(Icons.Default.PersonAdd, null, tint = Forest)
+                    Text("Add", color = Forest)
+                }
             }
             TextButton(onClick = {
                 scope.launch {
