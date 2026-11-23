@@ -48,6 +48,7 @@ class NearbyTransport(
     private val strategy = Strategy.P2P_CLUSTER
     private val connected = ConcurrentHashMap.newKeySet<String>()
     private val recording = AtomicBoolean(false)
+    private val syncingVoiceToServer = AtomicBoolean(false)
     private val sampleRate = 16000
     @Volatile private var started = false
     @Volatile private var recorder: AudioRecord? = null
@@ -299,8 +300,10 @@ class NearbyTransport(
     }
 
     fun syncPendingVoiceToServer(token: String, conversationId: String) {
-        if (token.isBlank() || conversationId.isBlank() || conversationId.startsWith("nearby-")) return
+        if (token.isBlank() || conversationId.isBlank() || conversationId.startsWith("nearby-") ||
+            !syncingVoiceToServer.compareAndSet(false, true)) return
         thread(name = "GreenCallNearbyVoiceServerSync") {
+            try {
             val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
             val grouped = linkedMapOf<String, JSONObject>()
             for (index in 0 until saved.length()) {
@@ -322,6 +325,9 @@ class NearbyTransport(
                     onStatus("Voice message remains queued until a connection is available")
                     break
                 }
+            }
+            } finally {
+                syncingVoiceToServer.set(false)
             }
         }
     }
