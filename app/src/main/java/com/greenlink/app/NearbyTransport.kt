@@ -272,7 +272,8 @@ class NearbyTransport(
             }
             if (audio.isNotEmpty() && offlineNames.isNotEmpty()) {
                 val duration = (audio.size / 32).coerceIn(1, 25000)
-                offlineNames.forEach { savePendingVoice(it, audio, duration) }
+                val recordingId = java.util.UUID.randomUUID().toString()
+                offlineNames.forEach { savePendingVoice(it, audio, duration, recordingId) }
                 onStatus("Voice saved for ${offlineNames.size} friend(s) until nearby")
             } else if (audio.isNotEmpty()) {
                 onStatus("Nearby voice sent")
@@ -286,15 +287,43 @@ class NearbyTransport(
         if (recording.getAndSet(false)) onStatus("Saving nearby voice…")
     }
 
-    private fun savePendingVoice(target: String, audio: ByteArray, durationMs: Int) {
+    private fun savePendingVoice(target: String, audio: ByteArray, durationMs: Int, recordingId: String) {
         val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
         val item = JSONObject()
-            .put("id", "${System.currentTimeMillis()}-${audio.size}")
+            .put("id", recordingId)
             .put("target", target)
             .put("audioBase64", Base64.encodeToString(audio, Base64.NO_WRAP))
             .put("durationMs", durationMs)
         saved.put(item)
         outbox.edit().putString("pending", saved.toString()).apply()
+    }
+
+    fun syncPendingVoiceToServer(token: String, conversationId: String) {
+        if (token.isBlank() || conversationId.isBlank() || conversationId.startsWith("nearby-")) return
+        thread(name = "GreenCallNearbyVoiceServerSync") {
+            val saved = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+            val grouped = linkedMapOf<String, JSONObject>()
+            for (index in 0 until saved.length()) {
+                val item = saved.optJSONObject(index) ?: continue
+                if (!grouped.containsKey(item.optString("id"))) grouped[item.optString("id")] = item
+            }
+            for ((recordingId, item) in grouped) {
+                try {
+                    GreenCallApi.sendVoicemail(token, conversationId, item.optString("audioBase64"), item.optInt("durationMs"))
+                    val current = runCatching { JSONArray(outbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                    val remaining = JSONArray()
+                    for (index in 0 until current.length()) {
+                        val candidate = current.optJSONObject(index) ?: continue
+                        if (candidate.optString("id") != recordingId) remaining.put(candidate)
+                    }
+                    outbox.edit().putString("pending", remaining.toString()).apply()
+                    onStatus("Queued voice message synced to GreenCall")
+                } catch (_: Exception) {
+                    onStatus("Voice message remains queued until a connection is available")
+                    break
+                }
+            }
+        }
     }
 
     private fun deliverPendingVoice(endpointId: String, peerName: String) {
