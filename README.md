@@ -14,11 +14,12 @@ The `server/` directory contains the REST + Socket.IO API, PostgreSQL schema, Do
 The backend supports shared registration/login, display-name search, friends, direct and group conversations, persisted text messages, voicemail storage, and authorized live voice packet forwarding. It must be deployed and its URL configured in the Android app before cross-device online features are available.
 
 ## Offline behavior
-- Online messages are stored on the server and can be fetched after reconnecting.
-- Unmuted connected recipients can receive live voice packets over Socket.IO.
-- Muted/offline recipients can receive saved voicemails once connected.
-- When internet is unavailable, messages/audio need a direct nearby route or an opted-in relay. The server cannot transmit across a network outage or across islands without any route.
-- Nearby Connections transport, on-device audio capture/playback, and end-to-end media encryption remain client-side work and are not claimed as complete.
+- Nearby Connections supports direct text messages between two GreenCall users within Bluetooth/Wi-Fi radio range. Both users must open the same direct chat, grant Nearby permissions, and have their devices discoverable.
+- Direct messages queued on the device are sent when the selected friend connects nearby; they also retry through the server when an internet session reconnects.
+- Nearby group messaging, offline live voice, and offline voice-mail transfer are not implemented yet.
+- Online unmuted recipients can receive live voice packets over Socket.IO. Muted/offline recipients can receive saved voicemails after they reconnect to the internet.
+- The nearby transport currently trusts the selected username advertised by the peer; it is not end-to-end encrypted. Do not use it for sensitive information until identity verification and encryption are added.
+- A server cannot deliver messages across an internet outage unless a direct nearby route or another relay exists.
 
 ## Build
 Open in Android Studio with JDK 17 and Android SDK 35. The app uses the Android build workflow in GitHub Actions.
