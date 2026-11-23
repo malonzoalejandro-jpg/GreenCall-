@@ -339,7 +339,7 @@ private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUse
         Header("Groups", "Create a space for your friends.")
         if (groups.isEmpty()) EmptyState(Icons.Default.Groups, "No groups yet", "Create a group and choose its members.")
         else LazyColumn(Modifier.weight(1f)) { items(groups) { group ->
-            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(group); Spacer(Modifier.width(12.dp)); Text(group, color = Ink, fontWeight = FontWeight.SemiBold) }
+            Row(Modifier.fillMaxWidth().clickable { open(group) }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(group); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(group, color = Ink, fontWeight = FontWeight.SemiBold); Text("Group conversation", color = Muted, fontSize = 10.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Muted) }
         } }
         Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.Add, null); Text("Create group") }
     }
@@ -354,7 +354,7 @@ private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUse
             } }
         } },
         confirmButton = { TextButton(onClick = {
-            if (title.isNotBlank()) save(groups + title.trim())
+            if (title.isNotBlank()) { val groupName = title.trim(); save(groups + groupName); prefs.edit().putString("group_members_" + currentUser + "_" + groupName, JSONArray(selectedMembers.toList()).toString()).apply() }
             title = ""; selectedMembers = emptySet(); show = false
         }) { Text("Create") } },
         dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
