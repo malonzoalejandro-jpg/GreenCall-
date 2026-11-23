@@ -413,6 +413,7 @@ private fun ConversationScreen(
     DisposableEffect(nearbyTransport) {
         onDispose { nearbyTransport.stop() }
     }
+    var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
     LaunchedEffect(nearbyIncoming) {
         val packet = nearbyIncoming ?: return@LaunchedEffect
         val text = packet.optString("text")
@@ -427,7 +428,6 @@ private fun ConversationScreen(
         }
         nearbyIncoming = null
     }
-    var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
     fun retryPendingMessages() {
         scope.launch {
             val queued = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
@@ -484,7 +484,12 @@ private fun ConversationScreen(
                 prefs.edit().putString(storageKey, raw).apply()
                 connectionError = ""
             } catch (error: Exception) {
-                connectionError = error.message ?: "Unable to load this conversation."
+                if (friendId.isNotBlank() && conversationId.isBlank()) {
+                    conversationId = "nearby-${currentUser}-${storageKey.substringAfterLast("_")}"
+                    connectionError = "Offline mode: connect to your friend nearby to exchange messages."
+                } else {
+                    connectionError = error.message ?: "Unable to load this conversation."
+                }
             }
         } else {
             val cached = prefs.getString("conversation_${storageKey}", "") ?: ""
