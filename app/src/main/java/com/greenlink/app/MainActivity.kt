@@ -835,7 +835,7 @@ private fun ConversationScreen(
                                 scope.launch {
                                     try {
                                         if (item.optBoolean("local")) {
-                                            voiceController?.playVoicemail(item.optString("audioBase64"))
+                                            LocalVoicePlayer.play(item.optString("audioBase64"))
                                         } else {
                                             val audio = withContext(Dispatchers.IO) { GreenCallApi.getVoicemailAudio(token, item.optString("id")) }
                                             voiceController?.playVoicemail(audio)
