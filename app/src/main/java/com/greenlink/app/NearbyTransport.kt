@@ -183,27 +183,27 @@ class NearbyTransport(
         val packet = JSONObject().put("type", "text").put("id", java.util.UUID.randomUUID().toString())
             .put("text", text).put("sender", displayName).put("sentAt", System.currentTimeMillis())
         val bytes = byteArrayOf(0x10) + packet.toString().toByteArray(StandardCharsets.UTF_8)
+        val messageId = packet.optString("id")
         val activeNames = connected.mapNotNull { endpointNames[it] }.toSet()
         expectedPeerNames.filter { expected -> activeNames.none { it.equals(expected, ignoreCase = true) } }
-            .forEach { savePendingText(it, text) }
+            .forEach { savePendingText(it, text, messageId) }
         connected.forEach { endpointId ->
             val peer = endpointNames[endpointId].orEmpty()
             client.sendPayload(endpointId, Payload.fromBytes(bytes))
                 .addOnFailureListener {
-                    if (peer.isNotBlank()) savePendingText(peer, text)
+                    if (peer.isNotBlank()) savePendingText(peer, text, messageId)
                     onStatus("Nearby message saved for retry")
                 }
         }
         return true
     }
 
-    private fun savePendingText(target: String, text: String) {
-        if (target.isBlank() || text.isBlank()) return
+    private fun savePendingText(target: String, text: String, messageId: String) {
+        if (target.isBlank() || text.isBlank() || messageId.isBlank()) return
         val saved = runCatching { JSONArray(textOutbox.getString("pending", "[]") ?: "[]") }.getOrElse { JSONArray() }
-        if ((0 until saved.length()).any { saved.optJSONObject(it)?.optString("target") == target &&
-                saved.optJSONObject(it)?.optString("text") == text }) return
-        saved.put(JSONObject().put("id", java.util.UUID.randomUUID().toString())
-            .put("target", target).put("text", text))
+        if ((0 until saved.length()).any { saved.optJSONObject(it)?.optString("id") == messageId &&
+                saved.optJSONObject(it)?.optString("target") == target }) return
+        saved.put(JSONObject().put("id", messageId).put("target", target).put("text", text))
         textOutbox.edit().putString("pending", saved.toString()).apply()
     }
 
