@@ -749,7 +749,8 @@ private fun ConversationScreen(
                             detectTapGestures(onPress = {
                                 var useNearby = false
                                 var started = false
-                                if (nearbyEnabled && nearbyTransport.hasPeers()) {
+                                val onlineVoiceReady = voiceController?.isConnected() == true
+                                if (nearbyEnabled && (nearbyTransport.hasPeers() || !onlineVoiceReady)) {
                                     useNearby = true
                                     started = nearbyTransport.startTalking()
                                 } else {
