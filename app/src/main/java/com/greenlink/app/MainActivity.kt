@@ -416,6 +416,23 @@ private fun ConversationScreen(
         onDispose { nearbyTransport.stop() }
     }
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
+    LaunchedEffect(nearbyStatus) {
+        if (nearbyStatus.startsWith("Nearby connected")) {
+            val queued = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
+            if (queued.isNotEmpty()) {
+                val updated = JSONArray()
+                for (i in 0 until messages.length()) {
+                    val item = messages.getJSONObject(i)
+                    if (item.optBoolean("pending") && nearbyTransport.sendText(item.optString("text"))) {
+                        updated.put(JSONObject(item.toString()).put("pending", false).put("nearby", true))
+                    } else updated.put(item)
+                }
+                messages = updated
+                raw = updated.toString()
+                prefs.edit().putString(storageKey, raw).apply()
+            }
+        }
+    }
     LaunchedEffect(nearbyIncoming) {
         val packet = nearbyIncoming ?: return@LaunchedEffect
         val text = packet.optString("text")
