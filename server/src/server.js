@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
-import helmet from '@fastify/helmet';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
