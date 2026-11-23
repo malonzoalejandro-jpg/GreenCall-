@@ -737,11 +737,17 @@ private fun ConversationScreen(
                         .background(if (receivingVoice) Color(0xFFDBEDE3) else Forest, RoundedCornerShape(16.dp))
                         .pointerInput(voiceController, nearbyTransport, nearbyEnabled, muted, micGranted, conversationId) {
                             detectTapGestures(onPress = {
-                                val useNearby = nearbyEnabled && nearbyTransport.hasPeers()
-                                val started = if (useNearby) {
-                                    nearbyTransport.startTalking()
+                                var useNearby = false
+                                var started = false
+                                if (nearbyEnabled && nearbyTransport.hasPeers()) {
+                                    useNearby = true
+                                    started = nearbyTransport.startTalking()
                                 } else {
-                                    voiceController?.startTalking() == true
+                                    started = voiceController?.startTalking() == true
+                                    if (!started && nearbyEnabled) {
+                                        useNearby = true
+                                        started = nearbyTransport.startTalking()
+                                    }
                                 }
                                 if (started) {
                                     nearbyTalking = useNearby
@@ -749,8 +755,8 @@ private fun ConversationScreen(
                                     if (useNearby) nearbyTransport.stopTalking()
                                     else voiceController?.stopTalking()
                                     nearbyTalking = false
-                                } else if (nearbyEnabled && !nearbyTransport.hasPeers() && conversationId.startsWith("nearby-")) {
-                                    voiceStatus = "Waiting for your friend to connect nearby"
+                                } else {
+                                    voiceStatus = "Microphone could not start. Check microphone permission and try again."
                                 }
                             })
                         },
