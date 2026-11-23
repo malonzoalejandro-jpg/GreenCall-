@@ -63,12 +63,15 @@ class NearbyTransport(
     private val queuedVoiceBuffers = ConcurrentHashMap<String, ByteArrayOutputStream>()
     private val queuedVoiceDurations = ConcurrentHashMap<String, Int>()
 
-    private fun sendFrame(type: Byte, data: ByteArray = byteArrayOf()) {
-        if (connected.isEmpty()) return
+    private fun sendFrame(type: Byte, data: ByteArray = byteArrayOf()) =
+        sendFrameTo(connected.toList(), type, data)
+
+    private fun sendFrameTo(targets: List<String>, type: Byte, data: ByteArray = byteArrayOf()) {
+        if (targets.isEmpty()) return
         val packet = ByteArray(data.size + 1)
         packet[0] = type
         if (data.isNotEmpty()) System.arraycopy(data, 0, packet, 1, data.size)
-        client.sendPayload(connected.toList(), Payload.fromBytes(packet))
+        client.sendPayload(targets, Payload.fromBytes(packet))
             .addOnFailureListener { onStatus("Nearby transfer failed") }
     }
 
@@ -254,7 +257,8 @@ class NearbyTransport(
         }
         recorder = input
         val recorded = ByteArrayOutputStream()
-        sendFrame(0x01)
+        val liveTargets = connected.toList()
+        sendFrameTo(liveTargets, 0x01)
         thread(name = "GreenCallNearbyMic") {
             val buffer = ByteArray(4096)
             var sentBytes = 0
@@ -262,7 +266,7 @@ class NearbyTransport(
                 val count = input.read(buffer, 0, minOf(buffer.size, 800000 - sentBytes))
                 if (count > 0) {
                     recorded.write(buffer, 0, count)
-                    sendFrame(0x02, buffer.copyOf(count))
+                    sendFrameTo(liveTargets, 0x02, buffer.copyOf(count))
                     sentBytes += count
                 }
             }
@@ -270,9 +274,9 @@ class NearbyTransport(
             input.release()
             if (recorder === input) recorder = null
             recording.set(false)
-            sendFrame(0x03)
+            sendFrameTo(liveTargets, 0x03)
             val audio = recorded.toByteArray()
-            val liveNames = connected.mapNotNull { endpointNames[it] }.toSet()
+            val liveNames = liveTargets.mapNotNull { endpointNames[it] }.toSet()
             val offlineNames = expectedPeerNames.filter { expected ->
                 liveNames.none { it.equals(expected, ignoreCase = true) }
             }
