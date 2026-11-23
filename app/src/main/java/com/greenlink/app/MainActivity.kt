@@ -378,6 +378,28 @@ private fun ConversationScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
+    fun retryPendingMessages() {
+        scope.launch {
+            val queued = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
+            for (pending in queued) {
+                try {
+                    val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, pending.optString("text")) }
+                    val updated = JSONArray()
+                    for (i in 0 until messages.length()) {
+                        val item = messages.getJSONObject(i)
+                        if (item.optString("id") != pending.optString("id")) updated.put(item)
+                    }
+                    updated.put(JSONObject().put("id", sent.optString("id")).put("text", sent.optString("body"))
+                        .put("mine", true).put("time", sent.optString("created_at")))
+                    messages = updated
+                    raw = updated.toString()
+                    prefs.edit().putString(storageKey, raw).apply()
+                } catch (_: Exception) {
+                    break
+                }
+            }
+        }
+    }
     val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         voiceStatus = if (granted) "Microphone ready — press and hold to talk" else "Microphone permission is required for walkie-talkie"
@@ -422,7 +444,7 @@ private fun ConversationScreen(
             token = token,
             conversationId = conversationId,
             muted = muted,
-            onStatus = { voiceStatus = it },
+            onStatus = { status -> voiceStatus = status; if (status == "Voice connected") retryPendingMessages() },
             onIncoming = { receivingVoice = it },
             onVoicemail = { voicemailCount += 1 },
             onMessage = { item ->
@@ -537,29 +559,11 @@ private fun ConversationScreen(
                 }
             }
         }
-        val pendingItems = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
-        if (pendingItems.isNotEmpty()) {
-            TextButton(onClick = {
-                scope.launch {
-                    for (pending in pendingItems) {
-                        try {
-                            val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, pending.optString("text")) }
-                            val updated = JSONArray()
-                            for (i in 0 until messages.length()) {
-                                val item = messages.getJSONObject(i)
-                                if (item.optString("id") != pending.optString("id")) updated.put(item)
-                            }
-                            updated.put(JSONObject().put("id", sent.optString("id")).put("text", sent.optString("body"))
-                                .put("mine", true).put("time", sent.optString("created_at")))
-                            messages = updated
-                            raw = updated.toString()
-                            prefs.edit().putString(storageKey, raw).apply()
-                        } catch (_: Exception) {
-                            break
-                        }
-                    }
-                }
-            }, Modifier.align(Alignment.CenterHorizontally)) { Text("Retry ${pendingItems.size} queued message(s)") }
+        val pendingItems = (0 until messages.length()).count { messages.optJSONObject(it)?.optBoolean("pending") == true }
+        if (pendingItems > 0) {
+            TextButton(onClick = { retryPendingMessages() }, Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Retry $pendingItems queued message(s)")
+            }
         }
         Row(Modifier.fillMaxWidth().background(Color.White).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(message, { message = it }, Modifier.weight(1f), placeholder = { Text("Write a message…") }, maxLines = 4)
