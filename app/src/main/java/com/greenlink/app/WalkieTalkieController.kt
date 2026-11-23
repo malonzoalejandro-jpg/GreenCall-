@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.util.Base64
 import io.socket.client.IO
 import io.socket.client.Socket
+import io.socket.client.Ack
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -142,8 +143,6 @@ class WalkieTalkieController(
                         if (audioBytes.size() + count <= maxVoiceBytes) {
                             audioBytes.write(copy)
                             shouldSend = true
-                        } else {
-                            recording.set(false)
                         }
                     }
                     if (shouldSend && liveStream) {
@@ -166,15 +165,37 @@ class WalkieTalkieController(
         val bytes = synchronized(audioBytes) { audioBytes.toByteArray() }
         val duration = (System.currentTimeMillis() - startedAt).coerceIn(0, 25000).toInt()
         if (bytes.isNotEmpty()) {
-            socket?.emit("voice:finish", JSONObject()
+            val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val packet = JSONObject()
                 .put("conversationId", conversationId)
                 .put("durationMs", duration)
-                .put("audioBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
-            onStatus("Voice sent or saved as voicemail")
+                .put("audioBase64", encoded)
+            val client = socket
+            if (client?.connected() == true) {
+                client.emit("voice:finish", packet, Ack { args ->
+                    val result = args.firstOrNull() as? JSONObject
+                    if (result?.optBoolean("ok") == true) onStatus("Voice sent or saved as voicemail")
+                    else sendRestFallback(encoded, duration)
+                })
+                onStatus("Sending voice…")
+            } else {
+                sendRestFallback(encoded, duration)
+            }
         } else {
             onStatus("No voice was recorded")
         }
         liveStream = false
+    }
+
+    private fun sendRestFallback(encoded: String, durationMs: Int) {
+        thread(name = "GreenCallVoiceUpload") {
+            try {
+                GreenCallApi.sendVoicemail(token, conversationId, encoded, durationMs)
+                onStatus("Voice message saved for delivery")
+            } catch (error: Exception) {
+                onStatus(error.message ?: "Voice message could not be sent")
+            }
+        }
     }
 
     private fun startPlayback() {
