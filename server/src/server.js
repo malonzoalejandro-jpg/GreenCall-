@@ -194,24 +194,78 @@ io.use((socket,next) => {
 });
 io.on('connection', socket => {
   const userId = socket.user.sub;
+  socket.data.muted = false;
   socket.join('user:' + userId);
+
+  socket.on('voice:mute', value => {
+    socket.data.muted = Boolean(value?.muted);
+  });
+
   socket.on('conversation:join', async ({ conversationId } = {}, ack = () => {}) => {
-    try { if (!(await member(conversationId,userId))) return ack({ ok:false,error:'Not a member.' }); socket.join(room(conversationId)); ack({ ok:true }); }
-    catch { ack({ ok:false,error:'Unable to join.' }); }
+    try {
+      if (!(await member(conversationId,userId))) return ack({ ok:false,error:'Not a member.' });
+      socket.join(room(conversationId));
+      ack({ ok:true });
+    } catch { ack({ ok:false,error:'Unable to join.' }); }
   });
   socket.on('conversation:leave', ({ conversationId } = {}) => socket.leave(room(conversationId)));
+
+  socket.on('voice:start', async (packet = {}, ack = () => {}) => {
+    try {
+      const conversationId = String(packet.conversationId || '');
+      if (!conversationId || !(await member(conversationId,userId))) return ack({ ok:false,error:'Not a conversation member.' });
+      const { rows } = await query('SELECT user_id FROM conversation_members WHERE conversation_id=$1 AND user_id<>$2', [conversationId,userId]);
+      const liveRecipients = [];
+      for (const row of rows) {
+        const sockets = await io.in('user:' + row.user_id).fetchSockets();
+        if (sockets.some(s => !s.data.muted)) {
+          liveRecipients.push(row.user_id);
+          for (const target of sockets) if (!target.data.muted) target.emit('voice:start', { conversationId, senderId:userId });
+        }
+      }
+      ack({ ok:true, liveRecipients });
+    } catch { ack({ ok:false,error:'Could not start voice.' }); }
+  });
+
   socket.on('voice:chunk', async (packet = {}) => {
-    if (!packet.conversationId || !(await member(packet.conversationId,userId))) return;
-    const payload = { conversationId: packet.conversationId, senderId: userId, data: packet.data };
-    socket.to(room(packet.conversationId)).emit('voice:chunk', payload);
+    try {
+      const conversationId = String(packet.conversationId || '');
+      const data = String(packet.data || '');
+      if (!conversationId || data.length > 16000 || !(await member(conversationId,userId))) return;
+      const sockets = await io.in(room(conversationId)).fetchSockets();
+      for (const target of sockets) {
+        if (target.id !== socket.id && !target.data.muted) {
+          target.emit('voice:chunk', { conversationId, senderId:userId, data });
+        }
+      }
+    } catch {}
   });
-  socket.on('voice:start', async (packet = {}) => {
-    if (!packet.conversationId || !(await member(packet.conversationId,userId))) return;
-    socket.to(room(packet.conversationId)).emit('voice:start', { conversationId: packet.conversationId, senderId: userId });
-  });
-  socket.on('voice:end', async (packet = {}) => {
-    if (!packet.conversationId || !(await member(packet.conversationId,userId))) return;
-    socket.to(room(packet.conversationId)).emit('voice:end', { conversationId: packet.conversationId, senderId: userId });
+
+  socket.on('voice:finish', async (packet = {}, ack = () => {}) => {
+    try {
+      const conversationId = String(packet.conversationId || '');
+      const audioBase64 = String(packet.audioBase64 || '');
+      const durationMs = Math.max(0,Math.min(25000,Number(packet.durationMs)||0));
+      if (!conversationId || !(await member(conversationId,userId))) return ack({ ok:false,error:'Not a conversation member.' });
+      if (audioBase64.length < 20 || audioBase64.length > 1500000) return ack({ ok:false,error:'Voice note is empty or too large (25-second limit).' });
+      const { rows } = await query('SELECT user_id FROM conversation_members WHERE conversation_id=$1 AND user_id<>$2', [conversationId,userId]);
+      const saved = [];
+      for (const row of rows) {
+        const sockets = await io.in('user:' + row.user_id).fetchSockets();
+        const live = sockets.some(s => !s.data.muted);
+        if (!live) {
+          const { rows: inserted } = await query(
+            'INSERT INTO voice_mails(conversation_id,sender_id,recipient_id,audio_base64,duration_ms) VALUES($1,$2,$3,$4,$5) RETURNING id,created_at',
+            [conversationId,userId,row.user_id,audioBase64,durationMs]
+          );
+          io.to('user:' + row.user_id).emit('voicemail:new', { id:inserted[0].id,conversationId,senderId:userId,createdAt:inserted[0].created_at });
+          saved.push(row.user_id);
+        }
+      }
+      const sockets = await io.in(room(conversationId)).fetchSockets();
+      for (const target of sockets) if (target.id !== socket.id && !target.data.muted) target.emit('voice:end', { conversationId,senderId:userId });
+      ack({ ok:true, voicemailRecipients:saved });
+    } catch { ack({ ok:false,error:'Could not save voice message.' }); }
   });
   socket.on('disconnect', () => {});
 });
