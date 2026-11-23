@@ -62,4 +62,10 @@ object GreenCallApi {
         request("POST", "/v1/conversations/$conversationId/messages", token,
             JSONObject().put("body", body)).getJSONObject("message")
 
+    fun createGroup(token: String, name: String, memberIds: List<String>): JSONObject {
+        val ids = JSONArray()
+        memberIds.forEach { ids.put(it) }
+        return request("POST", "/v1/groups", token,
+            JSONObject().put("name", name).put("memberIds", ids)).getJSONObject("group")
+    }
 }
