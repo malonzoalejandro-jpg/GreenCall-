@@ -57,7 +57,10 @@ class WalkieTalkieController(
                 onStatus("Voice connected")
                 flushPendingVoicemails()
             }
-            client.on(Socket.EVENT_DISCONNECT) { onStatus("Reconnecting voice…") }
+            client.on(Socket.EVENT_DISCONNECT) {
+                liveStream = false
+                onStatus("Reconnecting voice…")
+            }
             client.on(Socket.EVENT_CONNECT_ERROR) { onStatus("Voice connection unavailable") }
             client.on("voice:start") { args ->
                 if (!muted) {
@@ -127,8 +130,9 @@ class WalkieTalkieController(
         synchronized(audioBytes) { audioBytes.reset() }
         recorder = input
         startedAt = System.currentTimeMillis()
-        liveStream = true
-        socket?.emit("voice:start", JSONObject().put("conversationId", conversationId))
+        liveStream = socket?.connected() == true
+        if (liveStream) socket?.emit("voice:start", JSONObject().put("conversationId", conversationId))
+        else onStatus("Recording offline voice note…")
         try {
             input.startRecording()
         } catch (error: Exception) {
