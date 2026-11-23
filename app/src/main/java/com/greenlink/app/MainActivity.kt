@@ -143,6 +143,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                 prefs = prefs,
                 token = token,
                 currentUser = account,
+                expectedPeerName = if (selected.startsWith("Group: ")) "" else selected,
                 friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
                 conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
                 muted = muted,
@@ -362,6 +363,7 @@ private fun ConversationScreen(
     prefs: android.content.SharedPreferences,
     token: String,
     currentUser: String,
+    expectedPeerName: String,
     friendId: String,
     conversationIdOverride: String,
     muted: Boolean,
@@ -395,7 +397,7 @@ private fun ConversationScreen(
         }.toTypedArray()
     }
     val nearbyTransport = remember(storageKey, currentUser) {
-        NearbyTransport(context, currentUser,
+        NearbyTransport(context, currentUser, expectedPeerName,
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it })
     }
