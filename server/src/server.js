@@ -237,9 +237,9 @@ io.on('connection', socket => {
       const liveRecipients = [];
       for (const row of rows) {
         const sockets = await io.in('user:' + row.user_id).fetchSockets();
-        if (sockets.some(s => !s.data.muted)) {
+        if (sockets.some(s => !s.data.muted && s.rooms.has(room(conversationId)))) {
           liveRecipients.push(row.user_id);
-          for (const target of sockets) if (!target.data.muted) target.emit('voice:start', { conversationId, senderId:userId });
+          for (const target of sockets) if (!target.data.muted && target.rooms.has(room(conversationId))) target.emit('voice:start', { conversationId, senderId:userId });
         }
       }
       socket.data.liveVoiceRecipients = socket.data.liveVoiceRecipients || {};
@@ -273,7 +273,7 @@ io.on('connection', socket => {
       const saved = [];
       for (const row of rows) {
         const sockets = await io.in('user:' + row.user_id).fetchSockets();
-        const live = sockets.some(s => !s.data.muted);
+        const live = sockets.some(s => !s.data.muted && s.rooms.has(room(conversationId)));
         const wasLive = (socket.data.liveVoiceRecipients?.[conversationId] || []).includes(row.user_id);
         if (!live || !wasLive) {
           const { rows: inserted } = await query(
@@ -285,7 +285,7 @@ io.on('connection', socket => {
         }
       }
       const sockets = await io.in(room(conversationId)).fetchSockets();
-      for (const target of sockets) if (target.id !== socket.id && !target.data.muted) target.emit('voice:end', { conversationId,senderId:userId });
+      for (const target of sockets) if (target.id !== socket.id && !target.data.muted && target.rooms.has(room(conversationId))) target.emit('voice:end', { conversationId,senderId:userId });
       if (socket.data.liveVoiceRecipients) delete socket.data.liveVoiceRecipients[conversationId];
       ack({ ok:true, voicemailRecipients:saved });
     } catch { ack({ ok:false,error:'Could not save voice message.' }); }
