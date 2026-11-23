@@ -1,6 +1,7 @@
 package com.greenlink.app
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
@@ -609,6 +610,13 @@ private fun ConversationScreen(
         )
     }
     LaunchedEffect(voiceController, muted) { voiceController?.setMuted(muted) }
+    DisposableEffect(context, conversationId) {
+        if (conversationId.isNotBlank()) {
+            val serviceIntent = Intent(context, VoiceSessionService::class.java)
+            ContextCompat.startForegroundService(context, serviceIntent)
+            onDispose { context.stopService(serviceIntent) }
+        } else onDispose { }
+    }
     DisposableEffect(voiceController) {
         onDispose { voiceController?.close() }
     }
