@@ -87,8 +87,14 @@ class NearbyTransport(
                 }
                 0x02.toByte() -> {
                     val audio = bytes.copyOfRange(1, bytes.size)
-                    if (incomingMuted) synchronized(incomingAudio) { incomingAudio.write(audio) }
-                    else player?.let { output -> runCatching { output.write(audio, 0, audio.size) } }
+                    synchronized(incomingAudio) { incomingAudio.write(audio) }
+                    if (isMuted()) {
+                        incomingMuted = true
+                        stopPlayback()
+                        onIncomingVoice(false)
+                    } else if (!incomingMuted) {
+                        player?.let { output -> runCatching { output.write(audio, 0, audio.size) } }
+                    }
                 }
                 0x03.toByte() -> {
                     val duration = (System.currentTimeMillis() - incomingStartedAt).coerceIn(0, 25000).toInt()
