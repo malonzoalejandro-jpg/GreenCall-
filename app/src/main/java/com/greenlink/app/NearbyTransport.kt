@@ -283,7 +283,11 @@ class NearbyTransport(
             if (audio.isNotEmpty() && offlineNames.isNotEmpty()) {
                 val duration = (audio.size / 32).coerceIn(1, 25000)
                 val recordingId = java.util.UUID.randomUUID().toString()
-                offlineNames.forEach { savePendingVoice(it, audio, duration, recordingId, liveNames.isEmpty()) }
+                offlineNames.forEach { targetName ->
+                    savePendingVoice(targetName, audio, duration, recordingId, liveNames.isEmpty())
+                    connected.filter { endpointNames[it]?.equals(targetName, ignoreCase = true) == true }
+                        .forEach { endpointId -> deliverPendingVoice(endpointId, targetName) }
+                }
                 onStatus("Voice saved for ${offlineNames.size} friend(s) until nearby")
             } else if (audio.isNotEmpty()) {
                 onStatus("Nearby voice sent")
