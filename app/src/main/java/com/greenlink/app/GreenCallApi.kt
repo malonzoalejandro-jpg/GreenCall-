@@ -54,6 +54,9 @@ object GreenCallApi {
         request("POST", "/v1/conversations/direct", token, JSONObject().put("userId", userId))
             .getString("conversationId")
 
+    fun getConversations(token: String): JSONArray =
+        request("GET", "/v1/conversations", token).optJSONArray("conversations") ?: JSONArray()
+
     fun getMessages(token: String, conversationId: String): JSONArray =
         request("GET", "/v1/conversations/$conversationId/messages", token)
             .optJSONArray("messages") ?: JSONArray()
