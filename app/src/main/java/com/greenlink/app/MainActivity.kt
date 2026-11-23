@@ -613,7 +613,17 @@ private fun ConversationScreen(
             muted = muted,
             onStatus = { status -> voiceStatus = status; if (status == "Voice connected") retryPendingMessages() },
             onIncoming = { receivingVoice = it },
-            onVoicemail = { voicemailCount += 1 },
+            onVoicemail = {
+                scope.launch {
+                    runCatching {
+                        val remote = withContext(Dispatchers.IO) { GreenCallApi.getVoicemails(token) }
+                        val local = runCatching { JSONArray(prefs.getString("local_voicemail_${currentUser}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                        voicemailList = (0 until local.length()).mapNotNull { local.optJSONObject(it) } +
+                            (0 until remote.length()).map { remote.getJSONObject(it) }
+                        voicemailCount = voicemailList.size
+                    }
+                }
+            },
             onMessage = { item ->
                 val myId = prefs.getString("user_id", "") ?: ""
                 if (item.optString("sender_id") != myId) {
