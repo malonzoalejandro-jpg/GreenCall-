@@ -492,13 +492,17 @@ private fun ConversationScreen(
         val packet = nearbyIncoming ?: return@LaunchedEffect
         val text = packet.optString("text")
         if (text.isNotBlank()) {
-            val updated = JSONArray(messages.toString()).put(JSONObject()
-                .put("id", "nearby-${packet.optLong("sentAt", System.currentTimeMillis())}")
-                .put("text", text).put("mine", false).put("nearby", true)
-                .put("time", packet.optLong("sentAt", System.currentTimeMillis()).toString()))
-            messages = updated
-            raw = updated.toString()
-            prefs.edit().putString(storageKey, raw).apply()
+            val packetId = packet.optString("id").ifBlank { "nearby-${packet.optLong("sentAt", System.currentTimeMillis())}" }
+            val alreadySaved = (0 until messages.length()).any { messages.optJSONObject(it)?.optString("id") == packetId }
+            if (!alreadySaved) {
+                val updated = JSONArray(messages.toString()).put(JSONObject()
+                    .put("id", packetId)
+                    .put("text", text).put("mine", false).put("nearby", true)
+                    .put("time", packet.optLong("sentAt", System.currentTimeMillis()).toString()))
+                messages = updated
+                raw = updated.toString()
+                prefs.edit().putString(storageKey, raw).apply()
+            }
         }
         nearbyIncoming = null
     }
