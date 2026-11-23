@@ -436,12 +436,19 @@ private fun ConversationScreen(
             if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }.toTypedArray()
     }
+    val groupPeerIds = remember(storageKey, nearbyPeers) {
+        runCatching { JSONObject(prefs.getString("group_nearby_peer_ids_${currentUser}_${title}", "{}") ?: "{}") }
+            .getOrElse { JSONObject() }
+    }
+    val nearbyPeerIds = nearbyPeers.associateWith { handle ->
+        groupPeerIds.optString(handle).ifBlank {
+            (prefs.getString("friend_id_${currentUser}_${handle}", "") ?: "")
+                .ifBlank { if (nearbyPeers.size == 1) friendId else "" }
+        }
+    }.filterValues { it.isNotBlank() }
     val nearbyTransport = remember(storageKey, currentUser, nearbyPeers) {
         NearbyTransport(context, currentUser, storageKey, nearbyPeers,
-            expectedPeerIds = nearbyPeers.associateWith { handle ->
-                (prefs.getString("friend_id_${currentUser}_${handle}", "") ?: "")
-                    .ifBlank { if (nearbyPeers.size == 1) friendId else "" }
-            }.filterValues { it.isNotBlank() },
+            expectedPeerIds = nearbyPeerIds,
             isMuted = { mutedState },
             onStatus = { nearbyStatus = it },
             onText = { nearbyIncoming = it },
@@ -631,12 +638,23 @@ private fun ConversationScreen(
                             val group = all.optJSONObject(index) ?: continue
                             if (group.optString("id") != conversationId) continue
                             val members = group.optJSONArray("members") ?: JSONArray()
-                            val peers = (0 until members.length()).mapNotNull { members.optJSONObject(it)?.optString("username") }
-                                .filter { it.isNotBlank() && it != currentUser }.toSet()
+                            val peers = mutableSetOf<String>()
+                            val peerIds = JSONObject()
+                            for (memberIndex in 0 until members.length()) {
+                                val member = members.optJSONObject(memberIndex) ?: continue
+                                val username = member.optString("username")
+                                if (username.isNotBlank() && username != currentUser) {
+                                    peers.add(username)
+                                    peerIds.put(username, member.optString("id"))
+                                }
+                            }
                             nearbyPeers = peers
                             val saved = JSONArray()
                             peers.forEach { saved.put(it) }
-                            prefs.edit().putString("group_nearby_peers_${currentUser}_${title}", saved.toString()).apply()
+                            prefs.edit()
+                                .putString("group_nearby_peers_${currentUser}_${title}", saved.toString())
+                                .putString("group_nearby_peer_ids_${currentUser}_${title}", peerIds.toString())
+                                .apply()
                             break
                         }
                     }
@@ -944,7 +962,11 @@ private fun ConversationScreen(
                                                     nearbyPeers = updatedPeers
                                                     val peerArray = JSONArray()
                                                     updatedPeers.forEach { peerArray.put(it) }
-                                                    prefs.edit().putString("group_nearby_peers_${currentUser}_${title}", peerArray.toString()).apply()
+                                                    val peerIds = JSONObject(groupPeerIds.toString()).put(handle, memberId)
+                                                    prefs.edit()
+                                                        .putString("group_nearby_peers_${currentUser}_${title}", peerArray.toString())
+                                                        .putString("group_nearby_peer_ids_${currentUser}_${title}", peerIds.toString())
+                                                        .apply()
                                                     showAddMember = false
                                                 } catch (error: Exception) {
                                                     memberError = error.message ?: "Could not add this friend."
