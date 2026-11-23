@@ -166,6 +166,25 @@ app.post('/v1/conversations/:id/messages', auth, asyncRoute(async (req,res) => {
   res.status(201).json({ message });
 }));
 
+app.post('/v1/conversations/:id/voicemail', auth, asyncRoute(async (req,res) => {
+  const conversationId = req.params.id;
+  if (!(await member(conversationId,req.user.sub))) return res.status(403).json({ error:'Not a conversation member.' });
+  const audioBase64 = String(req.body.audioBase64 || '');
+  const durationMs = Math.max(0,Math.min(25000,Number(req.body.durationMs)||0));
+  if (audioBase64.length < 20 || audioBase64.length > 1500000) return res.status(400).json({ error:'Voice note is empty or too large (25-second limit).' });
+  const { rows: recipients } = await query('SELECT user_id FROM conversation_members WHERE conversation_id=$1 AND user_id<>$2', [conversationId,req.user.sub]);
+  const saved = [];
+  for (const recipient of recipients) {
+    const { rows } = await query(
+      'INSERT INTO voice_mails(conversation_id,sender_id,recipient_id,audio_base64,duration_ms) VALUES($1,$2,$3,$4,$5) RETURNING id,created_at',
+      [conversationId,req.user.sub,recipient.user_id,audioBase64,durationMs]
+    );
+    io.to('user:' + recipient.user_id).emit('voicemail:new', { id:rows[0].id,conversationId,senderId:req.user.sub,createdAt:rows[0].created_at });
+    saved.push(rows[0].id);
+  }
+  res.status(201).json({ saved: saved.length });
+}));
+
 app.get('/v1/voicemails', auth, asyncRoute(async (req,res) => {
   const { rows } = await query(`SELECT v.id,v.conversation_id,v.sender_id,u.display_name AS sender_name,v.duration_ms,v.created_at
     FROM voice_mails v JOIN users u ON u.id=v.sender_id WHERE v.recipient_id=$1 AND v.listened_at IS NULL ORDER BY v.created_at DESC LIMIT 50`, [req.user.sub]);
