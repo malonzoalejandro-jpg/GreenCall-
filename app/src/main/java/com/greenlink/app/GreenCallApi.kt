@@ -68,4 +68,9 @@ object GreenCallApi {
         return request("POST", "/v1/groups", token,
             JSONObject().put("name", name).put("memberIds", ids)).getJSONObject("group")
     }
+    fun getVoicemails(token: String): JSONArray =
+        request("GET", "/v1/voicemails", token).optJSONArray("voicemails") ?: JSONArray()
+
+    fun getVoicemailAudio(token: String, voicemailId: String): String =
+        request("GET", "/v1/voicemails/$voicemailId/audio", token).getString("audioBase64")
 }
