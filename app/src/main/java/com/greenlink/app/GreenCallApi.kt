@@ -78,6 +78,13 @@ object GreenCallApi {
         request("POST", "/v1/conversations/$conversationId/voicemail", token,
             JSONObject().put("audioBase64", audioBase64).put("durationMs", durationMs))
 
+    fun sendVoicemailToUser(token: String, conversationId: String, recipientId: String, audioBase64: String, durationMs: Int) =
+        request("POST", "/v1/voicemails", token, JSONObject()
+            .put("conversationId", conversationId)
+            .put("recipientId", recipientId)
+            .put("audioBase64", audioBase64)
+            .put("durationMs", durationMs))
+
     fun getVoicemails(token: String): JSONArray =
         request("GET", "/v1/voicemails", token).optJSONArray("voicemails") ?: JSONArray()
 
