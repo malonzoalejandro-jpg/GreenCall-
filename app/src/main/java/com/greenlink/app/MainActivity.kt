@@ -129,11 +129,12 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
             }, { authPage = it })
         } else if (selected.isNotBlank()) {
             ConversationScreen(
-                title = prefs.getString("display_${account}_${selected}", selected) ?: selected,
+                title = if (selected.startsWith("Group: ")) selected.removePrefix("Group: ") else (prefs.getString("display_${account}_${selected}", selected) ?: selected),
                 storageKey = "messages_${account}_${selected}",
                 prefs = prefs,
                 token = token,
-                friendId = prefs.getString("friend_id_${account}_${selected}", "") ?: "",
+                friendId = if (selected.startsWith("Group: ")) "" else (prefs.getString("friend_id_${account}_${selected}", "") ?: ""),
+                conversationIdOverride = if (selected.startsWith("Group: ")) (prefs.getString("group_id_${account}_${selected.removePrefix("Group: ")}", "") ?: "") else "",
                 onBack = { selected = "" }
             )
         } else {
@@ -150,7 +151,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
             ) { pad ->
                 when (tab) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
-                    1 -> GroupsScreen(groups, friends, account, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
+                    1 -> GroupsScreen(groups, friends, account, token, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
                     2 -> FriendsScreen(friends, account, token, prefs, ::saveFriends, pad)
                     else -> SettingsScreen(account, muted, { muted = it }, {
                         prefs.edit().remove("session").remove("token").apply()
@@ -350,6 +351,7 @@ private fun ConversationScreen(
     prefs: android.content.SharedPreferences,
     token: String,
     friendId: String,
+    conversationIdOverride: String,
     onBack: () -> Unit
 ) {
     var raw by remember(storageKey) { mutableStateOf(prefs.getString(storageKey, "[]") ?: "[]") }
@@ -360,10 +362,11 @@ private fun ConversationScreen(
     val scope = rememberCoroutineScope()
     var messages by remember(storageKey) { mutableStateOf(runCatching { JSONArray(raw) }.getOrElse { JSONArray() }) }
 
-    LaunchedEffect(token, friendId) {
-        if (token.isNotBlank() && friendId.isNotBlank()) {
+    LaunchedEffect(token, friendId, conversationIdOverride) {
+        if (token.isNotBlank() && (friendId.isNotBlank() || conversationIdOverride.isNotBlank())) {
             try {
-                conversationId = withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }
+                conversationId = if (conversationIdOverride.isNotBlank()) conversationIdOverride
+                    else withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }
                 val remote = withContext(Dispatchers.IO) { GreenCallApi.getMessages(token, conversationId) }
                 val normalized = JSONArray()
                 val myId = prefs.getString("user_id", "") ?: ""
@@ -445,19 +448,26 @@ private fun ConversationScreen(
 }
 
 @Composable
-private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUser: String, prefs: android.content.SharedPreferences, open: (String) -> Unit, save: (List<String>) -> Unit, pad: PaddingValues) {
+private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUser: String, token: String, prefs: android.content.SharedPreferences, open: (String) -> Unit, save: (List<String>) -> Unit, pad: PaddingValues) {
     var show by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var selectedMembers by remember { mutableStateOf(setOf<String>()) }
+    var creating by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(pad)) {
         Header("Groups", "Create a space for your friends.")
         if (groups.isEmpty()) EmptyState(Icons.Default.Groups, "No groups yet", "Create a group and choose its members.")
         else LazyColumn(Modifier.weight(1f)) { items(groups) { group ->
-            Row(Modifier.fillMaxWidth().clickable { open(group) }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(group); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(group, color = Ink, fontWeight = FontWeight.SemiBold); Text("Group conversation", color = Muted, fontSize = 10.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Muted) }
+            Row(Modifier.fillMaxWidth().clickable { open(group) }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(group); Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) { Text(group, color = Ink, fontWeight = FontWeight.SemiBold); Text("Group conversation", color = Muted, fontSize = 10.sp) }
+                Icon(Icons.Default.ChevronRight, null, tint = Muted)
+            }
         } }
         Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.Add, null); Text("Create group") }
     }
-    if (show) AlertDialog(onDismissRequest = { show = false }, title = { Text("Create a group") },
+    if (show) AlertDialog(onDismissRequest = { if (!creating) show = false }, title = { Text("Create a group") },
         text = { Column {
             OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Group name") }, singleLine = true)
             Spacer(Modifier.height(8.dp)); Text("Add friends", fontWeight = FontWeight.SemiBold)
@@ -466,12 +476,30 @@ private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUse
                 Checkbox(friend in selectedMembers, { checked -> selectedMembers = if (checked) selectedMembers + friend else selectedMembers - friend })
                 Text("@$friend", color = Ink)
             } }
+            if (error.isNotBlank()) Text(error, color = Color(0xFFB33A2B), fontSize = 11.sp)
         } },
-        confirmButton = { TextButton(onClick = {
-            if (title.isNotBlank()) { val groupName = title.trim(); save(groups + groupName); prefs.edit().putString("group_members_" + currentUser + "_" + groupName, JSONArray(selectedMembers.toList()).toString()).apply() }
-            title = ""; selectedMembers = emptySet(); show = false
-        }) { Text("Create") } },
-        dismissButton = { TextButton(onClick = { show = false }) { Text("Cancel") } })
+        confirmButton = { TextButton(enabled = !creating, onClick = {
+            val groupName = title.trim()
+            val ids = selectedMembers.mapNotNull { prefs.getString("friend_id_${currentUser}_${it}", null) }
+            if (groupName.length < 2) {
+                error = "Enter a group name."
+            } else if (ids.isEmpty() || ids.size != selectedMembers.size) {
+                error = "Choose at least one friend who is synced with GreenCall."
+            } else {
+                creating = true
+                scope.launch {
+                    try {
+                        val group = withContext(Dispatchers.IO) { GreenCallApi.createGroup(token, groupName, ids) }
+                        prefs.edit().putString("group_id_${currentUser}_${groupName}", group.optString("id")).apply()
+                        save(groups + groupName)
+                        title = ""; selectedMembers = emptySet(); error = ""; show = false
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "Could not create the group."
+                    } finally { creating = false }
+                }
+            }
+        }) { Text(if (creating) "Creating…" else "Create") } },
+        dismissButton = { TextButton(enabled = !creating, onClick = { show = false }) { Text("Cancel") } })
 }
 
 @Composable
