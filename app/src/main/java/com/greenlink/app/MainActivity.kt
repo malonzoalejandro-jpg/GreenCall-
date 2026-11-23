@@ -438,9 +438,12 @@ private fun ConversationScreen(
                     .put("audioBase64", Base64.encodeToString(audio, Base64.NO_WRAP))
                     .put("local", true)
                     .put("created_at", "Received nearby")
-                voicemailList = listOf(item) + voicemailList
+                val saved = runCatching { JSONArray(prefs.getString("local_voicemail_${currentUser}", "[]") ?: "[]") }.getOrElse { JSONArray() }
+                val updated = JSONArray().put(item)
+                for (index in 0 until saved.length()) saved.optJSONObject(index)?.let { updated.put(it) }
+                prefs.edit().putString("local_voicemail_${currentUser}", updated.toString()).apply()
+                voicemailList = listOf(item) + voicemailList.filterNot { it.optString("id") == item.optString("id") }
                 voicemailCount = voicemailList.size
-                prefs.edit().putString("local_voicemail_${currentUser}", JSONArray(voicemailList.filter { it.optBoolean("local") }.map { it.toString() }).toString()).apply()
                 voiceStatus = "Nearby voice saved as voicemail"
             })
     }
@@ -503,6 +506,22 @@ private fun ConversationScreen(
             val queued = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.optBoolean("pending") }
             for (pending in queued) {
                 try {
+                    if (conversationId.startsWith("nearby-")) {
+                        if (nearbyTransport.sendText(pending.optString("text"))) {
+                            val updated = JSONArray()
+                            for (i in 0 until messages.length()) {
+                                val item = messages.getJSONObject(i)
+                                if (item.optString("id") == pending.optString("id")) {
+                                    updated.put(JSONObject(item.toString()).put("pending", false).put("nearby", true))
+                                } else updated.put(item)
+                            }
+                            messages = updated
+                            raw = updated.toString()
+                            prefs.edit().putString(storageKey, raw).apply()
+                            continue
+                        }
+                        break
+                    }
                     val sent = withContext(Dispatchers.IO) { GreenCallApi.sendMessage(token, conversationId, pending.optString("text")) }
                     val updated = JSONArray()
                     for (i in 0 until messages.length()) {
@@ -586,7 +605,7 @@ private fun ConversationScreen(
     }
 
     val voiceController = remember(conversationId, token) {
-        if (conversationId.isBlank()) null else WalkieTalkieController(
+        if (conversationId.isBlank() || conversationId.startsWith("nearby-")) null else WalkieTalkieController(
             context = context,
             token = token,
             conversationId = conversationId,
@@ -611,7 +630,7 @@ private fun ConversationScreen(
     }
     LaunchedEffect(voiceController, muted) { voiceController?.setMuted(muted) }
     DisposableEffect(context, conversationId) {
-        if (conversationId.isNotBlank()) {
+        if (conversationId.isNotBlank() && !conversationId.startsWith("nearby-")) {
             val serviceIntent = Intent(context, VoiceSessionService::class.java)
             ContextCompat.startForegroundService(context, serviceIntent)
             onDispose { context.stopService(serviceIntent) }
