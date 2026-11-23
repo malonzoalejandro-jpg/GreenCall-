@@ -550,6 +550,7 @@ private fun ConversationScreen(
                 }
             }
             if (!conversationId.startsWith("nearby-")) {
+                nearbyTransport.syncPendingVoiceToServer(token, conversationId)
                 val nearbyOutgoing = (0 until messages.length()).map { messages.getJSONObject(it) }
                     .filter { it.optBoolean("nearby") && it.optBoolean("mine") && !it.optBoolean("synced") && !it.optBoolean("pending") }
                 for (nearby in nearbyOutgoing) {
