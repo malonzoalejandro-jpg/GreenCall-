@@ -99,6 +99,16 @@ class VoiceSessionService : Service() {
                     }
                 }
             }
+            client.on("call:incoming") { args ->
+                val call = args.firstOrNull() as? JSONObject ?: return@on
+                showIncomingCallNotification(
+                    call.optString("callId"),
+                    call.optString("conversationId"),
+                    call.optString("callerId"),
+                    call.optString("callerName", "GreenCall friend"),
+                    call.optBoolean("video")
+                )
+            }
             client.on("message:new") { args ->
                 val message = args.firstOrNull() as? JSONObject ?: return@on
                 if (message.optString("sender_id") == currentUserId) return@on
@@ -108,6 +118,35 @@ class VoiceSessionService : Service() {
             }
             client.connect()
         } catch (_: Exception) { }
+    }
+
+    private fun showIncomingCallNotification(callId: String, conversationId: String, callerId: String, callerName: String, video: Boolean) {
+        val open = Intent(this, CallActivity::class.java)
+            .putExtra("token", activeToken)
+            .putExtra("conversation_id", conversationId)
+            .putExtra("peer_id", callerId)
+            .putExtra("peer_name", callerName)
+            .putExtra("call_id", callId)
+            .putExtra("video", video)
+            .putExtra("incoming", true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pending = PendingIntent.getActivity(
+            this, callId.hashCode(), open,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val kind = if (video) "video" else "voice"
+        val notification = NotificationCompat.Builder(this, MESSAGE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_greencall)
+            .setContentTitle("$kind call from $callerName")
+            .setContentText("Tap to answer in GreenCall")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .setFullScreenIntent(pending, true)
+            .setContentIntent(pending)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(callId.hashCode(), notification)
     }
 
     private fun showMessageNotification(title: String, body: String, conversationId: String) {
