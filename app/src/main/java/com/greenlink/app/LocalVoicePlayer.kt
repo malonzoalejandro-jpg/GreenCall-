@@ -3,13 +3,14 @@ package com.greenlink.app
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.content.Context
 import android.util.Base64
 import kotlin.concurrent.thread
 
 object LocalVoicePlayer {
     @Volatile private var active: AudioTrack? = null
 
-    fun play(encoded: String) {
+    fun play(encoded: String, context: Context) {
         stop()
         thread(name = "GreenCallLocalVoicePlayback") {
             runCatching {
@@ -41,7 +42,9 @@ object LocalVoicePlayer {
                 var offset = 0
                 while (offset < bytes.size && active === track) {
                     val count = minOf(8192, bytes.size - offset)
-                    val written = track.write(bytes, offset, count)
+                    val chunk = bytes.copyOfRange(offset, offset + count)
+                    val boosted = AudioAmplifier.apply(context, chunk)
+                    val written = track.write(boosted, 0, boosted.size)
                     if (written <= 0) break
                     offset += written
                 }
