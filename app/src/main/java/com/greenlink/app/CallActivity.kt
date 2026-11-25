@@ -15,6 +15,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -71,7 +72,14 @@ class CallActivity : ComponentActivity() {
     private lateinit var cameraButton: Button
     private lateinit var speakerButton: Button
     private var speakerOn = true
-    private val permissions = arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
+    private val requiredPermissions: Array<String> get() = if (videoCall) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) else arrayOf(Manifest.permission.RECORD_AUDIO)
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (requiredPermissions.all { grants[it] == true || ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) connectSignaling()
+        else {
+            status.text = "Microphone permission is required for calls; video also needs camera permission."
+            acceptButton.visibility = View.GONE
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,9 +95,8 @@ class CallActivity : ComponentActivity() {
             return
         }
         buildUi()
-        val missing = permissions.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 7201)
-        else connectSignaling()
+        val missing = requiredPermissions.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray()) else connectSignaling()
     }
 
     private fun buildUi() {
@@ -158,17 +165,6 @@ class CallActivity : ComponentActivity() {
     }
 
     private val audioManager get() = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 7201) {
-            if (this.permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) connectSignaling()
-            else {
-                status.text = "Microphone and camera permissions are required for calls."
-                acceptButton.visibility = View.GONE
-            }
-        }
-    }
 
     private fun connectSignaling() {
         if (socket != null) return
@@ -286,7 +282,7 @@ class CallActivity : ComponentActivity() {
             setMirror(true)
             setEnableHardwareScaler(true)
         }
-        root.addView(remoteRenderer, FrameLayout.LayoutParams(-1, -1))
+        root.addView(remoteRenderer, 0, FrameLayout.LayoutParams(-1, -1))
         root.addView(localRenderer, FrameLayout.LayoutParams(320, 420, Gravity.TOP or Gravity.END).apply {
             topMargin = 20
             rightMargin = 18
