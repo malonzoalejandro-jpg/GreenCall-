@@ -31,6 +31,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
     implementation("io.socket:socket.io-client:2.1.1") { exclude(group = "org.json", module = "json") }
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
