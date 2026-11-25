@@ -14,6 +14,15 @@ CREATE TABLE IF NOT EXISTS friendships (
   PRIMARY KEY (user_id, friend_id),
   CHECK (user_id <> friend_id)
 );
+CREATE TABLE IF NOT EXISTS friend_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(requester_id, recipient_id),
+  CHECK(requester_id <> recipient_id)
+);
+CREATE INDEX IF NOT EXISTS friend_requests_recipient_idx ON friend_requests(recipient_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   kind VARCHAR(12) NOT NULL CHECK (kind IN ('direct','group')),
