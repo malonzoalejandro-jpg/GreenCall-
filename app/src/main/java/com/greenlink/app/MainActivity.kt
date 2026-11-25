@@ -198,7 +198,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
                     1 -> GroupsScreen(groups, friends, account, token, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
                     2 -> FriendsScreen(friends, account, token, prefs, ::saveFriends, pad)
-                    else -> SettingsScreen(account, muted, { muted = it; prefs.edit().putBoolean("muted", it).apply() }, {
+                    else -> SettingsScreen(account, muted, { muted = it; prefs.edit().putBoolean("muted", it).apply() }, prefs, {
                         prefs.edit().remove("session").remove("token").apply()
                         token = ""
                         account = ""; selected = ""; tab = 0
@@ -1164,7 +1164,8 @@ private fun GroupsScreen(groups: List<String>, friends: List<String>, currentUse
 }
 
 @Composable
-private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> Unit, signOut: () -> Unit, pad: PaddingValues) {
+private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> Unit, prefs: android.content.SharedPreferences, signOut: () -> Unit, pad: PaddingValues) {
+    var gain by remember { mutableFloatStateOf(prefs.getFloat("playback_gain", 1.0f).coerceIn(0.5f, 3.0f)) }
     Column(Modifier.fillMaxSize().padding(pad)) {
         Header("Settings", "Your GreenCall preferences")
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1175,6 +1176,19 @@ private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> 
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text("Mute walkie-talkie", color = Ink, fontWeight = FontWeight.SemiBold); Text("Don't play incoming live voice when muted.", color = Muted, fontSize = 11.sp) }
                     Switch(muted, setMuted)
+                }
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Voice playback volume", color = Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text(String.format(java.util.Locale.US, "%.1fx", gain), color = Forest, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(value = gain, onValueChange = {
+                        gain = it
+                        prefs.edit().putFloat("playback_gain", it).apply()
+                    }, valueRange = 0.5f..3.0f)
+                    Text("Boosts incoming voice inside GreenCall, independently of your phone's media-volume buttons. High boost may distort loud audio.", color = Muted, fontSize = 11.sp)
                 }
             }
             Text("Nearby mode sends text and push-to-talk audio directly between connected friends or group members without internet. Keep the conversation open and stay within radio range. Muted nearby voice is saved on this device. Server sync and remote delivery still need internet.", color = Muted, fontSize = 12.sp)
