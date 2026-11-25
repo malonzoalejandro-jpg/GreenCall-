@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("conversation_id")?.let {
             getSharedPreferences("greencall", Context.MODE_PRIVATE).edit()
                 .putString("notification_conversation_id", it).apply()
+            recreate()
         }
     }
 }
@@ -922,7 +923,7 @@ private fun ConversationScreen(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
                         Column(Modifier.widthIn(max = 290.dp).background(if (mine) Mint else Color.White, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
                             Text(item.optString("text"), color = Ink, fontSize = 14.sp)
-                            Text(if (item.optBoolean("pending")) "Pending · will retry when online" else if (mine) "You" else title, color = Muted, fontSize = 9.sp)
+                            Text(if (item.optBoolean("pending")) "Waiting for nearby friend · will deliver when in range or online" else if (mine) "You" else title, color = Muted, fontSize = 9.sp)
                         }
                     }
                 }
@@ -1128,7 +1129,7 @@ private fun ConversationScreen(
                                 scope.launch {
                                     try {
                                         if (item.optBoolean("local")) {
-                                            LocalVoicePlayer.play(item.optString("audioBase64"))
+                                            LocalVoicePlayer.play(item.optString("audioBase64"), context)
                                         } else {
                                             val audio = withContext(Dispatchers.IO) { GreenCallApi.getVoicemailAudio(token, item.optString("id")) }
                                             voiceController?.playVoicemail(audio)
