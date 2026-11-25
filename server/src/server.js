@@ -86,14 +86,55 @@ app.get('/v1/users/search', auth, asyncRoute(async (req,res) => {
   res.json({ users: rows.map(publicUser) });
 }));
 
-app.post('/v1/friends/:friendId', auth, asyncRoute(async (req,res) => {
-  if (req.user.sub === req.params.friendId) return res.status(400).json({ error: 'You cannot add yourself.' });
-  const exists = await query('SELECT id FROM users WHERE id=$1', [req.params.friendId]);
-  if (!exists.rowCount) return res.status(404).json({ error: 'User not found.' });
-  await query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [req.user.sub,req.params.friendId]);
-  await query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [req.params.friendId,req.user.sub]);
-  const { rows } = await query("SELECT id,display_name,username FROM users WHERE id=$1", [req.params.friendId]);
-  res.status(201).json({ friend: publicUser(rows[0]) });
+app.post('/v1/friend-requests/:friendId', auth, asyncRoute(async (req,res) => {
+  const friendId = req.params.friendId;
+  if (req.user.sub === friendId) return res.status(400).json({ error:'You cannot add yourself.' });
+  if (!(await query('SELECT id FROM users WHERE id=$1', [friendId])).rowCount) return res.status(404).json({ error:'User not found.' });
+  if ((await query('SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2', [req.user.sub,friendId])).rowCount) return res.status(409).json({ error:'You are already friends.' });
+  if ((await query('SELECT id FROM friend_requests WHERE requester_id=$1 AND recipient_id=$2', [friendId,req.user.sub])).rowCount) return res.status(409).json({ error:'They already sent you a request. Accept it in Friend requests.' });
+  const { rows } = await query('INSERT INTO friend_requests(requester_id,recipient_id) VALUES($1,$2) ON CONFLICT(requester_id,recipient_id) DO UPDATE SET created_at=NOW() RETURNING id', [req.user.sub,friendId]);
+  res.status(201).json({ requestId:rows[0].id, pending:true });
+}));
+
+app.get('/v1/friend-requests', auth, asyncRoute(async (req,res) => {
+  const { rows } = await query(`SELECT r.id,r.created_at,u.id AS user_id,u.display_name,u.username
+    FROM friend_requests r JOIN users u ON u.id=r.requester_id
+    WHERE r.recipient_id=$1 ORDER BY r.created_at DESC LIMIT 100`, [req.user.sub]);
+  res.json({ requests:rows.map(r => ({ id:r.id, createdAt:r.created_at, user:publicUser({id:r.user_id,display_name:r.display_name,username:r.username}) })) });
+}));
+
+app.post('/v1/friend-requests/:requestId/accept', auth, asyncRoute(async (req,res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT requester_id,recipient_id FROM friend_requests WHERE id=$1 AND recipient_id=$2 FOR UPDATE', [req.params.requestId,req.user.sub]);
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error:'Friend request not found.' }); }
+    const { requester_id: requesterId, recipient_id: recipientId } = rows[0];
+    await client.query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2),($2,$1) ON CONFLICT DO NOTHING', [requesterId,recipientId]);
+    await client.query('DELETE FROM friend_requests WHERE id=$1', [req.params.requestId]);
+    await client.query('COMMIT');
+    const { rows: users } = await client.query('SELECT id,display_name,username FROM users WHERE id=$1', [requesterId]);
+    res.json({ accepted:true, friend:publicUser(users[0]) });
+  } catch(error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}));
+
+app.delete('/v1/friend-requests/:requestId', auth, asyncRoute(async (req,res) => {
+  const removed = await query('DELETE FROM friend_requests WHERE id=$1 AND (recipient_id=$2 OR requester_id=$2)', [req.params.requestId,req.user.sub]);
+  if (!removed.rowCount) return res.status(404).json({ error:'Friend request not found.' });
+  res.json({ removed:true });
+}));
+
+app.delete('/v1/friends/:friendId', auth, asyncRoute(async (req,res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)', [req.user.sub,req.params.friendId]);
+    await client.query('DELETE FROM friend_requests WHERE (requester_id=$1 AND recipient_id=$2) OR (requester_id=$2 AND recipient_id=$1)', [req.user.sub,req.params.friendId]);
+    await client.query('COMMIT');
+    res.json({ removed:true });
+  } catch(error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }));
 
 app.get('/v1/friends', auth, asyncRoute(async (req,res) => {
