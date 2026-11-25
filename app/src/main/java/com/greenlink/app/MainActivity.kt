@@ -294,32 +294,57 @@ private fun accountDirectory(prefs: android.content.SharedPreferences) =
 private fun FriendsScreen(friends: List<String>, currentUser: String, token: String, prefs: android.content.SharedPreferences,
                           save: (List<String>) -> Unit, pad: PaddingValues) {
     var show by remember { mutableStateOf(false) }
+    var showRequests by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(emptyList<JSONObject>()) }
+    var requests by remember { mutableStateOf(emptyList<JSONObject>()) }
     var searching by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    fun refreshRequests() {
+        scope.launch {
+            runCatching {
+                val remote = withContext(Dispatchers.IO) { GreenCallApi.getFriendRequests(token) }
+                requests = (0 until remote.length()).map { remote.getJSONObject(it) }
+            }
+        }
+    }
+    LaunchedEffect(token) { refreshRequests() }
     Column(Modifier.fillMaxSize().padding(pad)) {
         Header("Friends", "Find people by their display name.")
-        if (friends.isEmpty()) EmptyState(Icons.Default.PersonSearch, "No friends added", "Tap Add friend and search their name.")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { refreshRequests(); showRequests = true }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.PersonAddAlt1, null); Spacer(Modifier.width(7.dp))
+                Text("Friend requests" + if (requests.isNotEmpty()) " · ${requests.size}" else "")
+            }
+            Spacer(Modifier.width(10.dp))
+            Button(onClick = { show = true }) { Icon(Icons.Default.Add, null); Text("Add") }
+        }
+        if (friends.isEmpty()) EmptyState(Icons.Default.PersonSearch, "No friends added", "Search for someone and send them a friend request.")
         else LazyColumn(Modifier.weight(1f)) {
             items(friends) { handle ->
                 val display = prefs.getString("display_${currentUser}_${handle}", handle) ?: handle
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(display); Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
-                    Icon(Icons.Default.CheckCircle, null, tint = Leaf)
+                    IconButton(onClick = {
+                        scope.launch {
+                            val id = prefs.getString("friend_id_${currentUser}_${handle}", "") ?: ""
+                            if (id.isNotBlank()) runCatching { withContext(Dispatchers.IO) { GreenCallApi.unfriend(token, id) } }
+                            save(friends - handle)
+                        }
+                    }) { Icon(Icons.Default.PersonRemove, "Unfriend", tint = Muted) }
                 }
                 HorizontalDivider(color = Color(0xFFE8EEE9))
             }
         }
-        Button(onClick = { show = true }, Modifier.fillMaxWidth().padding(18.dp)) { Icon(Icons.Default.PersonAdd, null); Text("Add friend") }
     }
     if (show) AlertDialog(onDismissRequest = { show = false; search = ""; result = ""; results = emptyList() },
         title = { Text("Find a friend") },
         text = {
             Column {
-                Text("Search using the name they registered with, not their @username.", color = Muted, fontSize = 12.sp)
+                Text("Search by the name they registered with.", color = Muted, fontSize = 12.sp)
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(search, { search = it; result = ""; results = emptyList() }, Modifier.fillMaxWidth(), label = { Text("Person's name") }, singleLine = true)
                 Button(onClick = {
@@ -328,9 +353,8 @@ private fun FriendsScreen(friends: List<String>, currentUser: String, token: Str
                         try {
                             val found = withContext(Dispatchers.IO) { GreenCallApi.searchUsers(token, search.trim()) }
                             results = (0 until found.length()).map { found.getJSONObject(it) }
-                        } catch (error: Exception) {
-                            result = error.message ?: "Search failed."
-                        } finally { searching = false }
+                        } catch (error: Exception) { result = error.message ?: "Search failed." }
+                        finally { searching = false }
                     }
                 }, enabled = !searching && search.trim().length >= 2) {
                     if (searching) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("Search")
@@ -339,31 +363,69 @@ private fun FriendsScreen(friends: List<String>, currentUser: String, token: Str
                     val id = person.optString("id")
                     val handle = person.optString("username")
                     val display = person.optString("displayName")
-                    Row(Modifier.fillMaxWidth().clickable {
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !busy) {
                         scope.launch {
+                            busy = true
                             try {
                                 withContext(Dispatchers.IO) { GreenCallApi.addFriend(token, id) }
-                                prefs.edit()
-                                    .putString("display_${currentUser}_${handle}", display)
-                                    .putString("friend_id_${currentUser}_${handle}", id)
-                                    .apply()
-                                save(friends + handle)
-                                result = "$display added to your friends."
+                                result = "Friend request sent to $display."
                                 results = emptyList()
-                            } catch (error: Exception) {
-                                result = error.message ?: "Could not add this friend."
-                            }
+                                refreshRequests()
+                            } catch (error: Exception) { result = error.message ?: "Could not send request." }
+                            finally { busy = false }
                         }
                     }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(display); Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@$handle", color = Muted, fontSize = 11.sp) }
-                        Text("Add", color = Forest, fontWeight = FontWeight.Bold)
+                        Text("Send request", color = Forest, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
                 if (result.isNotBlank()) Text(result, color = Forest, fontSize = 12.sp)
             }
         },
         confirmButton = { TextButton(onClick = { show = false; search = ""; result = ""; results = emptyList() }) { Text("Done") } })
+    if (showRequests) AlertDialog(
+        onDismissRequest = { showRequests = false },
+        title = { Text("Friend requests") },
+        text = {
+            if (requests.isEmpty()) Text("No pending friend requests.", color = Muted)
+            else Column {
+                requests.forEach { request ->
+                    val user = request.optJSONObject("user") ?: JSONObject()
+                    val requestId = request.optString("id")
+                    val display = user.optString("displayName", "GreenCall user")
+                    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(display); Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) { Text(display, color = Ink, fontWeight = FontWeight.SemiBold); Text("@${user.optString("username")}", color = Muted, fontSize = 10.sp) }
+                        TextButton(enabled = !busy, onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val accepted = withContext(Dispatchers.IO) { GreenCallApi.acceptFriendRequest(token, requestId) }
+                                    val friend = accepted.optJSONObject("friend") ?: user
+                                    val handle = friend.optString("username")
+                                    prefs.edit().putString("display_${currentUser}_${handle}", friend.optString("displayName"))
+                                        .putString("friend_id_${currentUser}_${handle}", friend.optString("id")).apply()
+                                    save(friends + handle)
+                                    requests = requests.filterNot { it.optString("id") == requestId }
+                                } catch (_: Exception) { }
+                                finally { busy = false }
+                            }
+                        }) { Text("Accept", color = Forest) }
+                        TextButton(enabled = !busy, onClick = {
+                            scope.launch {
+                                busy = true
+                                runCatching { withContext(Dispatchers.IO) { GreenCallApi.declineFriendRequest(token, requestId) } }
+                                requests = requests.filterNot { it.optString("id") == requestId }
+                                busy = false
+                            }
+                        }) { Text("Decline", color = Muted) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showRequests = false }) { Text("Done") } }
+    )
 }
 
 @Composable
