@@ -46,7 +46,19 @@ object GreenCallApi {
             .optJSONArray("users") ?: JSONArray()
 
     fun addFriend(token: String, id: String) =
-        request("POST", "/v1/friends/$id", token, JSONObject())
+        request("POST", "/v1/friend-requests/$id", token, JSONObject())
+
+    fun getFriendRequests(token: String): JSONArray =
+        request("GET", "/v1/friend-requests", token).optJSONArray("requests") ?: JSONArray()
+
+    fun acceptFriendRequest(token: String, requestId: String): JSONObject =
+        request("POST", "/v1/friend-requests/$requestId/accept", token, JSONObject())
+
+    fun declineFriendRequest(token: String, requestId: String) =
+        request("DELETE", "/v1/friend-requests/$requestId", token)
+
+    fun unfriend(token: String, friendId: String) =
+        request("DELETE", "/v1/friends/$friendId", token)
 
     fun getFriends(token: String): JSONArray =
         request("GET", "/v1/friends", token).optJSONArray("friends") ?: JSONArray()
