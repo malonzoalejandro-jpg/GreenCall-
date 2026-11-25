@@ -743,7 +743,25 @@ private fun ConversationScreen(
                         ?: withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }.also {
                             prefs.edit().putString("conversation_${storageKey}", it).apply()
                         })
-                if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
+                if (friendId.isNotBlank() && conversationId.isNotBlank() && !conversationId.startsWith("nearby-")) {
+                IconButton(onClick = {
+                    context.startActivity(Intent(context, CallActivity::class.java)
+                        .putExtra("token", token)
+                        .putExtra("conversation_id", conversationId)
+                        .putExtra("peer_id", friendId)
+                        .putExtra("peer_name", title)
+                        .putExtra("video", false))
+                }) { Icon(Icons.Default.Call, "Voice call", tint = Forest) }
+                IconButton(onClick = {
+                    context.startActivity(Intent(context, CallActivity::class.java)
+                        .putExtra("token", token)
+                        .putExtra("conversation_id", conversationId)
+                        .putExtra("peer_id", friendId)
+                        .putExtra("peer_name", title)
+                        .putExtra("video", true))
+                }) { Icon(Icons.Default.Videocam, "Video call", tint = Forest) }
+            }
+            if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
                     runCatching {
                         val all = withContext(Dispatchers.IO) { GreenCallApi.getConversations(token) }
                         for (index in 0 until all.length()) {
