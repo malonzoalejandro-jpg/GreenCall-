@@ -743,24 +743,6 @@ private fun ConversationScreen(
                         ?: withContext(Dispatchers.IO) { GreenCallApi.createDirect(token, friendId) }.also {
                             prefs.edit().putString("conversation_${storageKey}", it).apply()
                         })
-                if (friendId.isNotBlank() && conversationId.isNotBlank() && !conversationId.startsWith("nearby-")) {
-                IconButton(onClick = {
-                    context.startActivity(Intent(context, CallActivity::class.java)
-                        .putExtra("token", token)
-                        .putExtra("conversation_id", conversationId)
-                        .putExtra("peer_id", friendId)
-                        .putExtra("peer_name", title)
-                        .putExtra("video", false))
-                }) { Icon(Icons.Default.Call, "Voice call", tint = Forest) }
-                IconButton(onClick = {
-                    context.startActivity(Intent(context, CallActivity::class.java)
-                        .putExtra("token", token)
-                        .putExtra("conversation_id", conversationId)
-                        .putExtra("peer_id", friendId)
-                        .putExtra("peer_name", title)
-                        .putExtra("video", true))
-                }) { Icon(Icons.Default.Videocam, "Video call", tint = Forest) }
-            }
             if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
                     runCatching {
                         val all = withContext(Dispatchers.IO) { GreenCallApi.getConversations(token) }
@@ -898,6 +880,24 @@ private fun ConversationScreen(
             Column(Modifier.weight(1f)) {
                 Text(title, color = Ink, fontWeight = FontWeight.Bold)
                 Text(if (nearbyEnabled) "Nearby device mode active" else if (conversationId.isNotBlank()) "GreenCall voice channel" else "Offline conversation", color = Muted, fontSize = 11.sp)
+            }
+            if (friendId.isNotBlank() && conversationId.isNotBlank() && !conversationId.startsWith("nearby-")) {
+                IconButton(onClick = {
+                    context.startActivity(Intent(context, CallActivity::class.java)
+                        .putExtra("token", token)
+                        .putExtra("conversation_id", conversationId)
+                        .putExtra("peer_id", friendId)
+                        .putExtra("peer_name", title)
+                        .putExtra("video", false))
+                }) { Icon(Icons.Default.Call, "Voice call", tint = Forest) }
+                IconButton(onClick = {
+                    context.startActivity(Intent(context, CallActivity::class.java)
+                        .putExtra("token", token)
+                        .putExtra("conversation_id", conversationId)
+                        .putExtra("peer_id", friendId)
+                        .putExtra("peer_name", title)
+                        .putExtra("video", true))
+                }) { Icon(Icons.Default.Videocam, "Video call", tint = Forest) }
             }
             if (conversationIdOverride.isNotBlank() && friendId.isBlank()) {
                 TextButton(onClick = { memberError = ""; showAddMember = true }) {
