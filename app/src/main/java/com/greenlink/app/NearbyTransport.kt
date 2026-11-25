@@ -105,7 +105,7 @@ class NearbyTransport(
                         stopPlayback()
                         onIncomingVoice(false)
                     } else if (!incomingMuted) {
-                        player?.let { output -> runCatching { output.write(audio, 0, audio.size) } }
+                        player?.let { output -> runCatching { val boosted = AudioAmplifier.apply(appContext, audio); output.write(boosted, 0, boosted.size) } }
                     }
                 }
                 0x03.toByte() -> {
