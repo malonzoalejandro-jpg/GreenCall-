@@ -74,7 +74,7 @@ class WalkieTalkieController(
                     val encoded = packet.optString("data")
                     if (encoded.isNotBlank()) {
                         val bytes = runCatching { Base64.decode(encoded, Base64.NO_WRAP) }.getOrNull()
-                        if (bytes != null) player?.write(bytes, 0, bytes.size)
+                        if (bytes != null) { val boosted = AudioAmplifier.apply(context, bytes); player?.write(boosted, 0, boosted.size) }
                     }
                 }
             }
@@ -296,7 +296,9 @@ class WalkieTalkieController(
                 var offset = 0
                 while (offset < bytes.size) {
                     val count = minOf(8192, bytes.size - offset)
-                    output.write(bytes, offset, count)
+                    val chunk = bytes.copyOfRange(offset, offset + count)
+                    val boosted = AudioAmplifier.apply(context, chunk)
+                    output.write(boosted, 0, boosted.size)
                     offset += count
                 }
                 output.stop()
