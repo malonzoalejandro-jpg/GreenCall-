@@ -265,6 +265,7 @@ io.use((socket,next) => {
   try { socket.user = jwt.verify(socket.handshake.auth?.token || '', JWT_SECRET, { issuer: 'greencall' }); next(); }
   catch { next(new Error('unauthorized')); }
 });
+const callSessions = new Map();
 io.on('connection', socket => {
   const userId = socket.user.sub;
   socket.data.muted = false;
@@ -344,6 +345,64 @@ io.on('connection', socket => {
       ack({ ok:true, voicemailRecipients:saved });
     } catch { ack({ ok:false,error:'Could not save voice message.' }); }
   });
+  socket.on('call:invite', async (packet = {}) => {
+    try {
+      const callId = String(packet.callId || '');
+      const conversationId = String(packet.conversationId || '');
+      const recipientId = String(packet.recipientId || '');
+      if (!callId || !conversationId || !recipientId || recipientId === userId ||
+          !(await member(conversationId,userId)) || !(await member(conversationId,recipientId))) {
+        socket.emit('call:error', { message:'This friend is not in the conversation.' });
+        return;
+      }
+      const call = { callId, conversationId, callerId:userId, recipientId, video:Boolean(packet.video) };
+      callSessions.set(callId, call);
+      const targets = await io.in('user:' + recipientId).fetchSockets();
+      if (!targets.length) {
+        socket.emit('call:error', { message:'Your friend is offline. Calls need both devices connected.' });
+        callSessions.delete(callId);
+        return;
+      }
+      io.to('user:' + recipientId).emit('call:incoming', {
+        callId, conversationId, callerId:userId, callerName:socket.user.username, video:call.video
+      });
+    } catch { socket.emit('call:error', { message:'Could not start the call.' }); }
+  });
+
+  socket.on('call:accept', async (packet = {}) => {
+    const call = callSessions.get(String(packet.callId || ''));
+    if (!call || call.recipientId !== userId) return;
+    socket.emit('call:accepted', { callId:call.callId });
+    io.to('user:' + call.callerId).emit('call:accepted', { callId:call.callId });
+  });
+
+  socket.on('call:signal', async (packet = {}) => {
+    const call = callSessions.get(String(packet.callId || ''));
+    if (!call || (call.callerId !== userId && call.recipientId !== userId)) return;
+    const type = String(packet.type || '');
+    if (!['offer','answer','ice'].includes(type)) return;
+    const otherId = call.callerId === userId ? call.recipientId : call.callerId;
+    const signal = { callId:call.callId, type };
+    if (type === 'ice') {
+      signal.candidate = String(packet.candidate || '').slice(0, 4096);
+      signal.sdpMid = String(packet.sdpMid || '').slice(0, 128);
+      signal.sdpMLineIndex = Number(packet.sdpMLineIndex) || 0;
+    } else {
+      signal.sdp = String(packet.sdp || '').slice(0, 100000);
+      if (!signal.sdp) return;
+    }
+    io.to('user:' + otherId).emit('call:signal', signal);
+  });
+
+  socket.on('call:end', (packet = {}) => {
+    const callId = String(packet.callId || '');
+    const call = callSessions.get(callId);
+    if (!call || (call.callerId !== userId && call.recipientId !== userId)) return;
+    const otherId = call.callerId === userId ? call.recipientId : call.callerId;
+    io.to('user:' + otherId).emit('call:ended', { callId });
+    callSessions.delete(callId);
+  });
+
   socket.on('disconnect', () => {});
 });
 
