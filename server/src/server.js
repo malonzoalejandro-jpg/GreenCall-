@@ -372,7 +372,6 @@ io.on('connection', socket => {
   socket.on('call:accept', async (packet = {}) => {
     const call = callSessions.get(String(packet.callId || ''));
     if (!call || call.recipientId !== userId) return;
-    socket.emit('call:accepted', { callId:call.callId });
     io.to('user:' + call.callerId).emit('call:accepted', { callId:call.callId });
   });
 
