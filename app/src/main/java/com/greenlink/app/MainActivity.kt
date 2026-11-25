@@ -54,7 +54,22 @@ private val Bg = Color(0xFFF5F8F5)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { GreenCallApp(getSharedPreferences("greencall", Context.MODE_PRIVATE)) }
+        val prefs = getSharedPreferences("greencall", Context.MODE_PRIVATE)
+        intent?.getStringExtra("conversation_id")?.let { prefs.edit().putString("notification_conversation_id", it).apply() }
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9101)
+        }
+        setContent { GreenCallApp(prefs) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("conversation_id")?.let {
+            getSharedPreferences("greencall", Context.MODE_PRIVATE).edit()
+                .putString("notification_conversation_id", it).apply()
+        }
     }
 }
 
@@ -91,6 +106,40 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
         prefs.edit().putString("groups_$account", JSONArray(groups).toString()).apply()
     }
 
+    val appContext = LocalContext.current
+    DisposableEffect(appContext, account, token) {
+        if (account.isNotBlank() && token.isNotBlank()) {
+            val serviceIntent = Intent(appContext, VoiceSessionService::class.java)
+                .putExtra("token", token)
+                .putExtra("user_id", prefs.getString("user_id", "") ?: "")
+            ContextCompat.startForegroundService(appContext, serviceIntent)
+            onDispose { appContext.stopService(serviceIntent) }
+        } else onDispose { }
+    }
+    LaunchedEffect(account, token) {
+        val pendingId = prefs.getString("notification_conversation_id", "") ?: ""
+        if (account.isNotBlank() && token.isNotBlank() && pendingId.isNotBlank()) {
+            runCatching {
+                val conversations = withContext(Dispatchers.IO) { GreenCallApi.getConversations(token) }
+                for (index in 0 until conversations.length()) {
+                    val item = conversations.optJSONObject(index) ?: continue
+                    if (item.optString("id") != pendingId) continue
+                    if (item.optString("kind") == "group") selected = "Group: " + item.optString("title", "Group")
+                    else {
+                        val members = item.optJSONArray("members") ?: JSONArray()
+                        for (memberIndex in 0 until members.length()) {
+                            val member = members.optJSONObject(memberIndex) ?: continue
+                            if (member.optString("username") != account) {
+                                selected = member.optString("username")
+                                break
+                            }
+                        }
+                    }
+                }
+                prefs.edit().remove("notification_conversation_id").apply()
+            }
+        }
+    }
     LaunchedEffect(account) { if (account.isNotBlank()) loadUserData(account) }
     LaunchedEffect(account, token) {
         if (account.isNotBlank() && token.isNotBlank()) {
@@ -808,13 +857,6 @@ private fun ConversationScreen(
         )
     }
     LaunchedEffect(voiceController, muted) { voiceController?.setMuted(muted) }
-    DisposableEffect(context, conversationId) {
-        if (conversationId.isNotBlank() && !conversationId.startsWith("nearby-")) {
-            val serviceIntent = Intent(context, VoiceSessionService::class.java)
-            ContextCompat.startForegroundService(context, serviceIntent)
-            onDispose { context.stopService(serviceIntent) }
-        } else onDispose { }
-    }
     DisposableEffect(voiceController) {
         onDispose { voiceController?.close() }
     }
