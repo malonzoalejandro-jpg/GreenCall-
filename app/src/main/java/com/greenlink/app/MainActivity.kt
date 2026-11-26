@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -240,7 +241,8 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                         NavigationBarItem(tab == 0, { tab = 0 }, icon = { Icon(Icons.Default.ChatBubble, null) }, label = { Text("Chats") })
                         NavigationBarItem(tab == 1, { tab = 1 }, icon = { Icon(Icons.Default.Groups, null) }, label = { Text("Groups") })
                         NavigationBarItem(tab == 2, { tab = 2 }, icon = { Icon(Icons.Default.People, null) }, label = { Text("Friends") })
-                        NavigationBarItem(tab == 3, { tab = 3 }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
+                        NavigationBarItem(tab == 3, { tab = 3 }, icon = { Icon(Icons.Default.SportsEsports, null) }, label = { Text("Games") })
+                        NavigationBarItem(tab == 4, { tab = 4 }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                     }
                 }
             ) { pad ->
@@ -248,6 +250,7 @@ private fun GreenCallApp(prefs: android.content.SharedPreferences) {
                     0 -> ChatsScreen(account, friends, prefs, { selected = it }, pad)
                     1 -> GroupsScreen(groups, friends, account, token, prefs, { selected = "Group: $it" }, ::saveGroups, pad)
                     2 -> FriendsScreen(friends, account, token, prefs, ::saveFriends, pad)
+                    3 -> OfflineGamesScreen(pad)
                     else -> SettingsScreen(account, muted, { muted = it; prefs.edit().putBoolean("muted", it).apply() }, prefs, {
                         prefs.edit().remove("session").remove("token").apply()
                         token = ""
@@ -292,9 +295,11 @@ private fun AuthScreen(register: Boolean, error: String, clearError: () -> Unit,
 
 @Composable
 private fun BrandMark() {
-    Box(Modifier.size(66.dp).background(Forest, RoundedCornerShape(21.dp)), contentAlignment = Alignment.Center) {
-        Icon(Icons.Default.Waves, null, tint = Leaf, modifier = Modifier.size(38.dp))
-    }
+    androidx.compose.foundation.Image(
+        painter = painterResource(R.drawable.ic_greencall),
+        contentDescription = "GreenCall original logo",
+        modifier = Modifier.size(76.dp)
+    )
 }
 
 @Composable
@@ -315,9 +320,11 @@ private fun Header(title: String, subtitle: String) {
 
 @Composable
 private fun BrandMarkSmall() {
-    Box(Modifier.size(35.dp).background(Forest, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
-        Icon(Icons.Default.Waves, null, tint = Leaf)
-    }
+    androidx.compose.foundation.Image(
+        painter = painterResource(R.drawable.ic_greencall),
+        contentDescription = "GreenCall logo",
+        modifier = Modifier.size(35.dp)
+    )
 }
 
 @Composable
@@ -1253,6 +1260,14 @@ private fun SettingsScreen(user: String, muted: Boolean, setMuted: (Boolean) -> 
                 }
             }
             Text("Nearby mode sends text and push-to-talk audio directly between connected friends or group members without internet. Keep the conversation open and stay within radio range. Muted nearby voice is saved on this device. Server sync and remote delivery still need internet.", color = Muted, fontSize = 12.sp)
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Credits", color = Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Created by", color = Muted, fontSize = 11.sp)
+                    Text("Jael Xhian Y Malonzo", color = Forest, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            }
             OutlinedButton(onClick = signOut, Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(8.dp)); Text("Sign out") }
         }
     }
