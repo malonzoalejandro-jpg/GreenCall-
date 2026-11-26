@@ -353,7 +353,10 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                         val spawned = next.toMutableList()
                                         if (empty.isNotEmpty()) spawned[empty.random()] = if (Random.nextInt(10)==0) 4 else 2
                                         tiles = spawned
-                                        if (tiles.maxOrNull() == 2048) { awardPoint(20); message = "You reached 2048! Amazing!" }
+                                        if (tiles.maxOrNull() == 2048) {
+                                            awardPoint(20)
+                                            message = "You reached 2048! Amazing!"
+                                        }
                                     } else message = "No tiles moved that way."
                                 }) { Text(direction) }
                             }
