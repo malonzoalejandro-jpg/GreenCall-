@@ -94,6 +94,10 @@ private fun GamePlay(index: Int, back: () -> Unit) {
     var message by remember(index) { mutableStateOf("Ready when you are.") }
     var input by remember(index) { mutableStateOf("") }
     var target by remember(index) { mutableIntStateOf(Random.nextInt(1, 101)) }
+    var mathA by remember(index) { mutableIntStateOf(Random.nextInt(2, 21)) }
+    var mathB by remember(index) { mutableIntStateOf(Random.nextInt(2, 13)) }
+    var scramble by remember(index) { mutableStateOf("") }
+    var tiles by remember(index) { mutableStateOf(List(16) { if (it == 5) 2 else 0 }) }
     var choice by remember(index) { mutableStateOf("") }
     var board by remember(index) { mutableStateOf(List(9) { "" }) }
     var playerTurn by remember(index) { mutableStateOf(true) }
@@ -180,10 +184,9 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         }) { Text("Check guess") }
                     }
                     3 -> {
-                        val a = (2..20).random(); val b = (2..12).random()
-                        Text("$a × $b = ?", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        Text("$mathA × $mathB = ?", fontSize = 30.sp, fontWeight = FontWeight.Bold)
                         OutlinedTextField(input, { input = it.filter(Char::isDigit) }, label = { Text("Answer") }, singleLine = true)
-                        Button(onClick = { if (input.toIntOrNull() == a*b) { score++; message = "Correct! +1"; input = "" } else message = "Not quite. Try another one." }) { Text("Submit") }
+                        Button(onClick = { if (input.toIntOrNull() == mathA*mathB) { score++; message = "Correct! +1"; input = ""; mathA = Random.nextInt(2,21); mathB = Random.nextInt(2,13) } else message = "Not quite. Try another one." }) { Text("Submit") }
                     }
                     4 -> {
                         Text("Find both matching symbols", fontSize = 13.sp)
@@ -223,10 +226,10 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         }
                     }
                     9 -> {
-                        val scrambled = remember(index) { word.toList().shuffled().joinToString("") }
-                        Text(scrambled, fontSize = 27.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
+                        if (scramble.isBlank()) scramble = word.toList().shuffled().joinToString("")
+                        Text(scramble, fontSize = 27.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
                         OutlinedTextField(input, { input = it.uppercase() }, label = { Text("Unscrambled word") }, singleLine = true)
-                        Button(onClick = { if (input.trim() == word) { score += 2; message = "Correct! +2 points."; word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); input = "" } else message = "Keep trying!" }) { Text("Check word") }
+                        Button(onClick = { if (input.trim() == word) { score += 2; message = "Correct! +2 points."; word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); scramble = ""; input = "" } else message = "Keep trying!" }) { Text("Check word") }
                     }
                     10 -> {
                         Text(word.map { if (it in letterSet) "$it " else "_ " }.joinToString(""), fontSize = 24.sp, letterSpacing = 2.sp)
@@ -274,23 +277,48 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             for (row in 0..3) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 for (col in 0..3) {
-                                    val v = if ((row*4+col) == 0) 2 else 0
-                                    Box(Modifier.size(58.dp).background(Color(0xFFE8F6EE), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { Text(if (v>0) v.toString() else "·", fontWeight = FontWeight.Bold) }
+                                    val v = tiles[row*4+col]
+                                    Box(Modifier.size(58.dp).background(if (v == 0) Color(0xFFE8F6EE) else Color(0xFFB7E4C7), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                                        Text(if (v > 0) v.toString() else "·", color = Color(0xFF123D2B), fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("↑","↓","←","→").forEach { Button(onClick = { score++; message = "Move $it · Keep combining tiles!" }) { Text(it) } }
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            listOf("↑","↓","←","→").forEach { direction ->
+                                Button(onClick = {
+                                    val next = move2048(tiles, direction)
+                                    if (next != tiles) {
+                                        val empty = next.indices.filter { next[it] == 0 }
+                                        val spawned = next.toMutableList()
+                                        if (empty.isNotEmpty()) spawned[empty.random()] = if (Random.nextInt(10)==0) 4 else 2
+                                        tiles = spawned
+                                        if (tiles.maxOrNull() == 2048) { score += 20; message = "You reached 2048! Amazing!" }
+                                    } else message = "No tiles moved that way."
+                                }) { Text(direction) }
+                            }
                         }
+                        TextButton(onClick = { tiles = List(16) { if (it == 5) 2 else 0 }; message = "New 2048 board." }) { Text("Restart") }
                     }
                     16 -> {
-                        Text(if (playerTurn) "Your turn · Red" else "Device · Yellow")
+                        Text("You: Red · Device: Yellow")
                         for (row in 0..5) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             for (col in 0..6) {
                                 val cell = row*7+col
                                 Box(Modifier.size(35.dp).background(when(fourBoard[cell]) { 1 -> Color(0xFFE34D4D); 2 -> Color(0xFFE6B83F); else -> Color(0xFFE8F6EE) }, RoundedCornerShape(50.dp)).clickable {
                                     val next = fourBoard.toMutableList()
                                     val landing = (5 downTo 0).map { it*7+col }.firstOrNull { next[it]==0 }
-                                    if (landing != null) { next[landing] = if(playerTurn) 1 else 2; fourBoard = next; playerTurn = !playerTurn; if(playerTurn) score++ }
+                                    if (landing != null && playerTurn) {
+                                        next[landing] = 1
+                                        val freeColumns = (0..6).filter { col -> (0..5).any { row -> next[row*7+col] == 0 } }
+                                        if (freeColumns.isNotEmpty()) {
+                                            val cpuCol = freeColumns.random()
+                                            val cpuLanding = (5 downTo 0).map { it*7+cpuCol }.firstOrNull { next[it] == 0 }
+                                            if (cpuLanding != null) next[cpuLanding] = 2
+                                        }
+                                        fourBoard = next
+                                        score++
+                                    }
                                 })
                             }
                         }
@@ -330,4 +358,35 @@ private fun GamePlay(index: Int, back: () -> Unit) {
             }
         }
     }
+}
+
+private fun move2048(source: List<Int>, direction: String): List<Int> {
+    val board = source.toMutableList()
+    fun merge(line: List<Int>): List<Int> {
+        val packed = line.filter { it != 0 }
+        val result = mutableListOf<Int>()
+        var i = 0
+        while (i < packed.size) {
+            if (i + 1 < packed.size && packed[i] == packed[i + 1]) {
+                result.add(packed[i] * 2)
+                i += 2
+            } else {
+                result.add(packed[i])
+                i++
+            }
+        }
+        while (result.size < 4) result.add(0)
+        return result
+    }
+    for (i in 0..3) {
+        val indices = when (direction) {
+            "←" -> (0..3).map { i*4+it }
+            "→" -> (3 downTo 0).map { i*4+it }
+            "↑" -> (0..3).map { it*4+i }
+            else -> (3 downTo 0).map { it*4+i }
+        }
+        val moved = merge(indices.map { board[it] })
+        indices.forEachIndexed { j, cell -> board[cell] = moved[j] }
+    }
+    return board
 }
