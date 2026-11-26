@@ -211,12 +211,25 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf("Rock","Paper","Scissors").forEach { pick ->
                                 Button(onClick = {
-                                    val cpu = listOf("Rock","Paper","Scissors").random()
-                                    choice = pick
-                                    message = when {
-                                        pick == cpu -> "Draw! Device picked $cpu."
-                                        (pick == "Rock" && cpu == "Scissors") || (pick == "Paper" && cpu == "Rock") || (pick == "Scissors" && cpu == "Paper") -> { awardPoint(1); "You win! Device picked $cpu." }
-                                        else -> "Device wins with $cpu."
+                                    if(mode=="1v1") {
+                                        if(choice.isBlank()) { choice=pick; activePlayer=2; message="Player 1 locked in. Pass the phone to Player 2." }
+                                        else {
+                                            val p1=choice; val p2=pick
+                                            when {
+                                                p1==p2 -> message="Draw! Both picked $p1."
+                                                (p1=="Rock" && p2=="Scissors") || (p1=="Paper" && p2=="Rock") || (p1=="Scissors" && p2=="Paper") -> { playerOneScore++; message="Player 1 wins: $p1 beats $p2." }
+                                                else -> { playerTwoScore++; message="Player 2 wins: $p2 beats $p1." }
+                                            }
+                                            choice=""; activePlayer=1
+                                        }
+                                    } else {
+                                        val cpu = listOf("Rock","Paper","Scissors").random()
+                                        choice = pick
+                                        message = when {
+                                            pick == cpu -> "Draw! Device picked $cpu."
+                                            (pick == "Rock" && cpu == "Scissors") || (pick == "Paper" && cpu == "Rock") || (pick == "Scissors" && cpu == "Paper") -> { awardPoint(1); "You win! Device picked $cpu." }
+                                            else -> "Device wins with $cpu."
+                                        }
                                     }
                                 }) { Text(pick) }
                             }
@@ -356,13 +369,15 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                     val next = fourBoard.toMutableList()
                                     val landing = (5 downTo 0).map { it*7+col }.firstOrNull { next[it]==0 }
                                     if (landing != null && playerTurn) {
-                                        next[landing] = 1
-                                        val freeColumns = (0..6).filter { col -> (0..5).any { row -> next[row*7+col] == 0 } }
-                                        if (freeColumns.isNotEmpty()) {
-                                            val cpuCol = freeColumns.random()
-                                            val cpuLanding = (5 downTo 0).map { it*7+cpuCol }.firstOrNull { next[it] == 0 }
-                                            if (cpuLanding != null) next[cpuLanding] = 2
-                                        }
+                                        next[landing] = if(mode=="1v1" && activePlayer==2) 2 else 1
+                                        if(mode!="1v1") {
+                                            val freeColumns = (0..6).filter { col -> (0..5).any { row -> next[row*7+col] == 0 } }
+                                            if (freeColumns.isNotEmpty()) {
+                                                val cpuCol = freeColumns.random()
+                                                val cpuLanding = (5 downTo 0).map { it*7+cpuCol }.firstOrNull { next[it] == 0 }
+                                                if (cpuLanding != null) next[cpuLanding] = 2
+                                            }
+                                        } else activePlayer = if(activePlayer==1) 2 else 1
                                         fourBoard = next
                                         awardPoint(1)
                                     }
