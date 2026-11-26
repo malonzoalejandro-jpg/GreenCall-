@@ -91,6 +91,10 @@ fun OfflineGamesScreen(pad: PaddingValues) {
 private fun GamePlay(index: Int, back: () -> Unit) {
     val game = offlineGames[index]
     var score by remember(index) { mutableIntStateOf(0) }
+    var mode by remember(index) { mutableStateOf("Solo") }
+    var playerOneScore by remember(index) { mutableIntStateOf(0) }
+    var playerTwoScore by remember(index) { mutableIntStateOf(0) }
+    var activePlayer by remember(index) { mutableIntStateOf(1) }
     var attempts by remember(index) { mutableIntStateOf(0) }
     var message by remember(index) { mutableStateOf("Ready when you are.") }
     var input by remember(index) { mutableStateOf("") }
@@ -124,6 +128,12 @@ private fun GamePlay(index: Int, back: () -> Unit) {
     var sudoku by remember(index) { mutableStateOf(listOf(1,2,3,4,3,4,1,2,2,1,4,3,4,3,2,1)) }
     var sudokuInput by remember(index) { mutableStateOf(List(16) { "" }) }
     val scope = rememberCoroutineScope()
+    val awardPoint: (Int) -> Unit = { points ->
+        if (mode == "1v1") {
+            if (activePlayer == 1) playerOneScore += points else playerTwoScore += points
+            activePlayer = if (activePlayer == 1) 2 else 1
+        } else if (mode != "Practice") score += points
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -137,6 +147,33 @@ private fun GamePlay(index: Int, back: () -> Unit) {
         Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(game.description, color = Color(0xFF718278), fontSize = 12.sp)
+                Text("CHOOSE MODE", color = Color(0xFF718278), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    listOf("Solo", "1v1", "Practice", "Challenge").forEach { option ->
+                        val active = mode == option
+                        TextButton(onClick = {
+                            mode = option; score = 0; playerOneScore = 0; playerTwoScore = 0; activePlayer = 1
+                            attempts = 0; input = ""; message = when(option) {
+                                "1v1" -> "Pass the phone between Player 1 and Player 2."
+                                "Practice" -> "Practice mode · score is not counted."
+                                "Challenge" -> "Challenge mode · chase your highest score."
+                                else -> "Solo mode · play against the device."
+                            }
+                            if(index==0) board = List(9) { "" }
+                            if(index==16) fourBoard = List(42) { 0 }
+                        }, contentPadding = PaddingValues(horizontal=5.dp, vertical=2.dp)) {
+                            Text(option, color=if(active) Color.White else Color(0xFF176B45), fontSize=10.sp,
+                                modifier=Modifier.background(if(active) Color(0xFF176B45) else Color(0xFFE8F6EE), RoundedCornerShape(10.dp)).padding(horizontal=6.dp, vertical=5.dp))
+                        }
+                    }
+                }
+                if(mode=="1v1") {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        Text("P1  $playerOneScore", color=Color(0xFF176B45), fontWeight=FontWeight.Bold)
+                        Text("P2  $playerTwoScore", color=Color(0xFF176B45), fontWeight=FontWeight.Bold)
+                    }
+                    Text("Player $activePlayer's turn", color=Color(0xFF176B45), fontWeight=FontWeight.Bold)
+                } else Text("SCORE  $score", color=Color(0xFF176B45), fontWeight=FontWeight.Bold)
                 Text(message, color = Color(0xFF123D2B), fontWeight = FontWeight.SemiBold)
                 when (index) {
                     0 -> {
@@ -146,14 +183,23 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                 for (col in 0..2) {
                                     val cell = row * 3 + col
                                     Button(onClick = {
-                                        if (board[cell].isEmpty() && playerTurn) {
-                                            val next = board.toMutableList(); next[cell] = "X"
-                                            val free = next.indices.filter { next[it].isEmpty() }
-                                            if (free.isNotEmpty()) next[free.random()] = "O"
-                                            board = next
-                                            score += 1
-                                            playerTurn = true
-                                            message = if (next.none { it.isEmpty() }) "Board full — start another round!" else "Your move!"
+                                        if (board[cell].isEmpty()) {
+                                            val next = board.toMutableList()
+                                            if(mode=="1v1") {
+                                                next[cell] = if(activePlayer==1) "X" else "O"
+                                                board = next
+                                                val won = listOf(listOf(0,1,2),listOf(3,4,5),listOf(6,7,8),listOf(0,3,6),listOf(1,4,7),listOf(2,5,8),listOf(0,4,8),listOf(2,4,6)).any { line -> line.all { next[it].isNotEmpty() && next[it]==next[line[0]] } }
+                                                if(won) { if(activePlayer==1) playerOneScore++ else playerTwoScore++; message="Player $activePlayer wins!" }
+                                                else if(next.none { it.isEmpty() }) message="Draw! Start a new round."
+                                                else { activePlayer=if(activePlayer==1) 2 else 1; message="Player $activePlayer's turn." }
+                                            } else {
+                                                next[cell] = "X"
+                                                val free = next.indices.filter { next[it].isEmpty() }
+                                                if (free.isNotEmpty()) next[free.random()] = "O"
+                                                board = next
+                                                awardPoint(1)
+                                                message = if (next.none { it.isEmpty() }) "Board full — start another round!" else "Your move!"
+                                            }
                                         }
                                     }, modifier = Modifier.size(76.dp), contentPadding = PaddingValues(0.dp)) { Text(board[cell].ifEmpty { " " }, fontSize = 25.sp) }
                                 }
@@ -169,7 +215,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                     choice = pick
                                     message = when {
                                         pick == cpu -> "Draw! Device picked $cpu."
-                                        (pick == "Rock" && cpu == "Scissors") || (pick == "Paper" && cpu == "Rock") || (pick == "Scissors" && cpu == "Paper") -> { score++; "You win! Device picked $cpu." }
+                                        (pick == "Rock" && cpu == "Scissors") || (pick == "Paper" && cpu == "Rock") || (pick == "Scissors" && cpu == "Paper") -> { awardPoint(1); "You win! Device picked $cpu." }
                                         else -> "Device wins with $cpu."
                                     }
                                 }) { Text(pick) }
@@ -181,13 +227,13 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         OutlinedTextField(input, { input = it.filter(Char::isDigit).take(3) }, label = { Text("Your guess") }, singleLine = true)
                         Button(onClick = {
                             val guess = input.toIntOrNull()
-                            if (guess != null) { attempts++; message = when { guess == target -> { score += 5; "Correct! New number generated."; target = Random.nextInt(1,101); attempts = 0; "Correct! +5 points. Try a new number." }; guess < target -> "Too low — try higher."; else -> "Too high — try lower." } }
+                            if (guess != null) { attempts++; message = when { guess == target -> { awardPoint(5); "Correct! New number generated."; target = Random.nextInt(1,101); attempts = 0; "Correct! +5 points. Try a new number." }; guess < target -> "Too low — try higher."; else -> "Too high — try lower." } }
                         }) { Text("Check guess") }
                     }
                     3 -> {
                         Text("$mathA × $mathB = ?", fontSize = 30.sp, fontWeight = FontWeight.Bold)
                         OutlinedTextField(input, { input = it.filter(Char::isDigit) }, label = { Text("Answer") }, singleLine = true)
-                        Button(onClick = { if (input.toIntOrNull() == mathA*mathB) { score++; message = "Correct! +1"; input = ""; mathA = Random.nextInt(2,21); mathB = Random.nextInt(2,13) } else message = "Not quite. Try another one." }) { Text("Submit") }
+                        Button(onClick = { if (input.toIntOrNull() == mathA*mathB) { awardPoint(1); message = "Correct! +1"; input = ""; mathA = Random.nextInt(2,21); mathB = Random.nextInt(2,13) } else message = "Not quite. Try another one." }) { Text("Submit") }
                     }
                     4 -> {
                         Text("Find both matching symbols", fontSize = 13.sp)
@@ -199,7 +245,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                         revealed = revealed + cell
                                         if (revealed.size >= 2) {
                                             val pair = revealed.toList().takeLast(2)
-                                            if (memory[pair[0]] == memory[pair[1]]) { matched = matched + pair; score++ }
+                                            if (memory[pair[0]] == memory[pair[1]]) { matched = matched + pair; awardPoint(1) }
                                             else scope.launch { delay(650); revealed = emptySet() }
                                             if (memory[pair[0]] == memory[pair[1]]) revealed = emptySet()
                                         }
@@ -213,24 +259,24 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                     }
                     5 -> {
                         Text("$tapCount / 25 taps", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                        Button(onClick = { if (!running) { running = true; tapCount = 0; seconds = 15; scope.launch { while (seconds > 0 && running) { delay(1000); seconds-- }; running = false; message = "Time! You tapped $tapCount times." } } else { tapCount++; if (tapCount >= 25) { score += 3; running = false; message = "Target reached! +3 points." } } }, modifier = Modifier.size(150.dp), shape = RoundedCornerShape(80.dp)) { Text(if (running) "TAP!" else "START", fontSize = 25.sp) }
+                        Button(onClick = { if (!running) { running = true; tapCount = 0; seconds = 15; scope.launch { while (seconds > 0 && running) { delay(1000); seconds-- }; running = false; message = "Time! You tapped $tapCount times." } } else { tapCount++; if (tapCount >= 25) { awardPoint(3); running = false; message = "Target reached! +3 points." } } }, modifier = Modifier.size(150.dp), shape = RoundedCornerShape(80.dp)) { Text(if (running) "TAP!" else "START", fontSize = 25.sp) }
                         Text("$seconds seconds left")
                     }
                     6 -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        listOf("Heads","Tails").forEach { pick -> Button(onClick = { val flip = listOf("Heads","Tails").random(); message = "It landed $flip."; if (pick == flip) score++ }) { Text(pick) } }
+                        listOf("Heads","Tails").forEach { pick -> Button(onClick = { val flip = listOf("Heads","Tails").random(); message = "It landed $flip."; if (pick == flip) awardPoint(1) }) { Text(pick) } }
                     }
-                    7 -> Button(onClick = { val you = (1..6).random(); val cpu = (1..6).random(); message = "You rolled $you · Device rolled $cpu"; if (you > cpu) score++ }) { Text("Roll dice") }
+                    7 -> Button(onClick = { val you = (1..6).random(); val cpu = (1..6).random(); message = "You rolled $you · Device rolled $cpu"; if (you > cpu) awardPoint(1) }) { Text("Roll dice") }
                     8 -> {
                         Text("Current number: $number", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("Higher","Lower").forEach { pick -> Button(onClick = { val next = Random.nextInt(1,14); val won = if (pick=="Higher") next > number else next < number; message = "Next was $next · " + if (won) "Correct!" else "Not this time."; if (won) score++; number = next }) { Text(pick) } }
+                            listOf("Higher","Lower").forEach { pick -> Button(onClick = { val next = Random.nextInt(1,14); val won = if (pick=="Higher") next > number else next < number; message = "Next was $next · " + if (won) "Correct!" else "Not this time."; if (won) awardPoint(1); number = next }) { Text(pick) } }
                         }
                     }
                     9 -> {
                         if (scramble.isBlank()) scramble = word.toList().shuffled().joinToString("")
                         Text(scramble, fontSize = 27.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
                         OutlinedTextField(input, { input = it.uppercase() }, label = { Text("Unscrambled word") }, singleLine = true)
-                        Button(onClick = { if (input.trim() == word) { score += 2; message = "Correct! +2 points."; word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); scramble = ""; input = "" } else message = "Keep trying!" }) { Text("Check word") }
+                        Button(onClick = { if (input.trim() == word) { awardPoint(2); message = "Correct! +2 points."; word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); scramble = ""; input = "" } else message = "Keep trying!" }) { Text("Check word") }
                     }
                     10 -> {
                         Text(word.map { if (it in letterSet) "$it " else "_ " }.joinToString(""), fontSize = 24.sp, letterSpacing = 2.sp)
@@ -238,14 +284,14 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             for (col in 0..8) {
                                 val ch = ('A'.code + row*9+col).toChar()
-                                if (ch <= 'Z') TextButton(onClick = { letterSet = letterSet + ch; if (ch in word) score++ }) { Text(ch.toString()) }
+                                if (ch <= 'Z') TextButton(onClick = { letterSet = letterSet + ch; if (ch in word) awardPoint(1) }) { Text(ch.toString()) }
                             }
                         }
                         TextButton(onClick = { word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); letterSet = emptySet() }) { Text("New word") }
                     }
                     11 -> {
                         Text("Tap the color: $colorName", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                        listOf("RED","BLUE","GREEN","YELLOW").forEach { c -> Button(onClick = { if (c == colorName) { score++; message = "Correct!"; colorName = listOf("RED","BLUE","GREEN","YELLOW").random() } else message = "Try again." }) { Text(c) } }
+                        listOf("RED","BLUE","GREEN","YELLOW").forEach { c -> Button(onClick = { if (c == colorName) { awardPoint(1); message = "Correct!"; colorName = listOf("RED","BLUE","GREEN","YELLOW").random() } else message = "Try again." }) { Text(c) } }
                     }
                     12 -> {
                         Button(onClick = {
@@ -262,13 +308,13 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         Text(sequence.chunked(1).joinToString("  "), fontSize = 30.sp, fontWeight = FontWeight.Bold)
                         Text("Memorize it, then type it below.")
                         OutlinedTextField(input, { input = it.filter(Char::isDigit).take(8) }, label = { Text("Sequence") }, singleLine = true)
-                        Button(onClick = { if (input == sequence) { score += 3; message = "Perfect memory!"; sequence = List(4) { Random.nextInt(1,5) }.joinToString(""); input = "" } else message = "Not quite. Try again." }) { Text("Check sequence") }
+                        Button(onClick = { if (input == sequence) { awardPoint(3); message = "Perfect memory!"; sequence = List(4) { Random.nextInt(1,5) }.joinToString(""); input = "" } else message = "Not quite. Try again." }) { Text("Check sequence") }
                     }
                     14 -> {
                         for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             for (col in 0..2) {
                                 val cell = row*3+col
-                                Button(onClick = { lights = lights.mapIndexed { i,v -> if (i==cell || i==cell-1 && cell%3>0 || i==cell+1 && cell%3<2 || i==cell-3 || i==cell+3) !v else v }; if (lights.none { it }) { score += 5; message = "All lights out! +5"; lights = List(9) { Random.nextBoolean() } } }, modifier = Modifier.size(70.dp)) { Text(if (lights[cell]) "💡" else " ", fontSize = 22.sp) }
+                                Button(onClick = { lights = lights.mapIndexed { i,v -> if (i==cell || i==cell-1 && cell%3>0 || i==cell+1 && cell%3<2 || i==cell-3 || i==cell+3) !v else v }; if (lights.none { it }) { awardPoint(5); message = "All lights out! +5"; lights = List(9) { Random.nextBoolean() } } }, modifier = Modifier.size(70.dp)) { Text(if (lights[cell]) "💡" else " ", fontSize = 22.sp) }
                             }
                         }
                         Text("Tap a light to toggle it and its neighbors.")
@@ -294,7 +340,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                         val spawned = next.toMutableList()
                                         if (empty.isNotEmpty()) spawned[empty.random()] = if (Random.nextInt(10)==0) 4 else 2
                                         tiles = spawned
-                                        if (tiles.maxOrNull() == 2048) { score += 20; message = "You reached 2048! Amazing!" }
+                                        if (tiles.maxOrNull() == 2048) { awardPoint(2)0; message = "You reached 2048! Amazing!" }
                                     } else message = "No tiles moved that way."
                                 }) { Text(direction) }
                             }
@@ -318,7 +364,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                                             if (cpuLanding != null) next[cpuLanding] = 2
                                         }
                                         fourBoard = next
-                                        score++
+                                        awardPoint(1)
                                     }
                                 })
                             }
@@ -330,7 +376,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         for (row in 0..4) Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             for (col in 0..4) {
                                 val cell=row*5+col
-                                Button(onClick = { opened = opened + cell; if(cell in mines) { message = "Boom! New board."; mines = (0 until 25).shuffled().take(4).toSet(); opened = emptySet() } else { score++; if(opened.size>=20) message = "Board cleared!" } }, modifier = Modifier.size(47.dp), contentPadding = PaddingValues(0.dp)) { Text(if(cell in opened) if(cell in mines) "💣" else "✓" else "?") }
+                                Button(onClick = { opened = opened + cell; if(cell in mines) { message = "Boom! New board."; mines = (0 until 25).shuffled().take(4).toSet(); opened = emptySet() } else { awardPoint(1); if(opened.size>=20) message = "Board cleared!" } }, modifier = Modifier.size(47.dp), contentPadding = PaddingValues(0.dp)) { Text(if(cell in opened) if(cell in mines) "💣" else "✓" else "?") }
                             }
                         }
                     }
@@ -351,7 +397,7 @@ private fun GamePlay(index: Int, back: () -> Unit) {
                         for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             for (col in 0..2) {
                                 val cell=row*3+col
-                                Button(onClick = { if(cell==mole) { score++; message="Nice hit!"; mole=Random.nextInt(0,9) } else message="Missed — try again." }, modifier=Modifier.size(72.dp)) { Text(if(cell==mole) "🐹" else "·", fontSize=22.sp) }
+                                Button(onClick = { if(cell==mole) { awardPoint(1); message="Nice hit!"; mole=Random.nextInt(0,9) } else message="Missed — try again." }, modifier=Modifier.size(72.dp)) { Text(if(cell==mole) "🐹" else "·", fontSize=22.sp) }
                             }
                         }
                     }
