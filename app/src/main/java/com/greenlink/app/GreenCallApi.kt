@@ -25,7 +25,15 @@ object GreenCallApi {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            val result = if (raw.isBlank()) JSONObject() else JSONObject(raw)
+            val result = if (raw.isBlank()) JSONObject() else runCatching { JSONObject(raw) }.getOrNull()
+            if (result == null) {
+                val detail = if (raw.trimStart().startsWith("<!DOCTYPE", true) || raw.trimStart().startsWith("<html", true)) {
+                    "GreenCall's server returned a web page instead of an API response. The friend-request API needs to be deployed or its route corrected."
+                } else {
+                    "GreenCall's server returned an invalid response (HTTP $status). Please try again."
+                }
+                throw IllegalStateException(detail)
+            }
             if (status !in 200..299) throw IllegalStateException(result.optString("error").ifBlank { "Request failed ($status)." })
             return result
         } finally {
