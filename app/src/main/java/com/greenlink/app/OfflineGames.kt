@@ -1,0 +1,333 @@
+package com.greenlink.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlin.random.Random
+
+private data class OfflineGame(val name: String, val category: String, val description: String, val symbol: String)
+
+private val offlineGames = listOf(
+    OfflineGame("Tic-Tac-Toe", "Puzzle", "Get three marks in a row against the device.", "✕"),
+    OfflineGame("Rock Paper Scissors", "Arcade", "Pick your move and beat the computer.", "✊"),
+    OfflineGame("Number Guess", "Brain", "Find the secret number from 1 to 100.", "🔢"),
+    OfflineGame("Math Sprint", "Brain", "Solve quick arithmetic questions.", "➗"),
+    OfflineGame("Memory Match", "Puzzle", "Find matching pairs of symbols.", "🧠"),
+    OfflineGame("Tap Rush", "Arcade", "Reach 25 taps before the timer runs out.", "⚡"),
+    OfflineGame("Coin Toss", "Casual", "Call heads or tails and test your luck.", "🪙"),
+    OfflineGame("Dice Duel", "Casual", "Roll higher than the computer.", "🎲"),
+    OfflineGame("Higher or Lower", "Card", "Guess whether the next number is higher.", "⬆"),
+    OfflineGame("Word Scramble", "Word", "Unscramble the hidden word.", "🔤"),
+    OfflineGame("Hangman", "Word", "Guess the hidden word one letter at a time.", "📝"),
+    OfflineGame("Color Match", "Arcade", "Choose the color that matches the prompt.", "🎨"),
+    OfflineGame("Reaction Test", "Arcade", "Wait for green, then tap as fast as you can.", "⏱"),
+    OfflineGame("Sequence Memory", "Memory", "Remember the number sequence and repeat it.", "🔁"),
+    OfflineGame("Lights Out", "Puzzle", "Turn off every light on the board.", "💡"),
+    OfflineGame("2048 Mini", "Puzzle", "Combine equal tiles to reach 2048.", "🔢"),
+    OfflineGame("Connect Four", "Strategy", "Connect four of your discs before the device.", "🔴"),
+    OfflineGame("Minesweeper Mini", "Puzzle", "Reveal safe tiles and avoid hidden mines.", "💣"),
+    OfflineGame("Mini Sudoku", "Brain", "Complete the 4 by 4 number grid.", "🔲"),
+    OfflineGame("Whack-a-Mole", "Arcade", "Hit the target before it moves.", "🐹")
+)
+
+@Composable
+fun OfflineGamesScreen(pad: PaddingValues) {
+    var selected by remember { mutableIntStateOf(-1) }
+    Column(Modifier.fillMaxSize().padding(pad).background(Color(0xFFF5F8F5))) {
+        if (selected < 0) {
+            Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 20.dp, vertical = 18.dp)) {
+                Text("Offline Arcade", color = Color(0xFF123D2B), fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)
+                Text("20 mini games · No internet required", color = Color(0xFF718278), fontSize = 12.sp)
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                itemsIndexed(offlineGames) { index, game ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().height(132.dp).clickable { selected = index },
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        Column(Modifier.fillMaxSize().padding(13.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                            Text(game.symbol, fontSize = 27.sp)
+                            Column {
+                                Text(game.name, color = Color(0xFF123D2B), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(game.category.uppercase(), color = Color(0xFF35C982), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            GamePlay(index = selected, back = { selected = -1 })
+        }
+    }
+}
+
+@Composable
+private fun GamePlay(index: Int, back: () -> Unit) {
+    val game = offlineGames[index]
+    var score by remember(index) { mutableIntStateOf(0) }
+    var attempts by remember(index) { mutableIntStateOf(0) }
+    var message by remember(index) { mutableStateOf("Ready when you are.") }
+    var input by remember(index) { mutableStateOf("") }
+    var target by remember(index) { mutableIntStateOf(Random.nextInt(1, 101)) }
+    var choice by remember(index) { mutableStateOf("") }
+    var board by remember(index) { mutableStateOf(List(9) { "" }) }
+    var playerTurn by remember(index) { mutableStateOf(true) }
+    var memory by remember(index) { mutableStateOf(List(8) { listOf("🍀","⭐","🍋","🌙")[it % 4] }.shuffled()) }
+    var revealed by remember(index) { mutableStateOf(emptySet<Int>()) }
+    var matched by remember(index) { mutableStateOf(emptySet<Int>()) }
+    var tapCount by remember(index) { mutableIntStateOf(0) }
+    var seconds by remember(index) { mutableIntStateOf(15) }
+    var running by remember(index) { mutableStateOf(false) }
+    var lights by remember(index) { mutableStateOf(List(9) { Random.nextBoolean() }) }
+    var number by remember(index) { mutableIntStateOf(Random.nextInt(1, 14)) }
+    var word by remember(index) { mutableStateOf(listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random()) }
+    var letterSet by remember(index) { mutableStateOf(emptySet<Char>()) }
+    var colorName by remember(index) { mutableStateOf(listOf("RED","BLUE","GREEN","YELLOW").random()) }
+    var reactionReady by remember(index) { mutableStateOf(false) }
+    var reactionStarted by remember(index) { mutableStateOf(false) }
+    var reactionMillis by remember(index) { mutableLongStateOf(0L) }
+    var sequence by remember(index) { mutableStateOf(List(4) { Random.nextInt(1, 5) }.joinToString("")) }
+    var fourBoard by remember(index) { mutableStateOf(List(42) { 0 }) }
+    var mines by remember(index) { mutableStateOf((0 until 25).shuffled().take(4).toSet()) }
+    var opened by remember(index) { mutableStateOf(emptySet<Int>()) }
+    var mole by remember(index) { mutableIntStateOf(Random.nextInt(0, 9)) }
+    var sudoku by remember(index) { mutableStateOf(listOf(1,2,3,4,3,4,1,2,2,1,4,3,4,3,2,1)) }
+    var sudokuInput by remember(index) { mutableStateOf(List(16) { "" }) }
+    val scope = rememberCoroutineScope()
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = back) { Icon(Icons.Default.ArrowBack, "Back", tint = Color(0xFF123D2B)) }
+            Column(Modifier.weight(1f)) {
+                Text(game.name, color = Color(0xFF123D2B), fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
+                Text("Offline game · Saved locally while you play", color = Color(0xFF718278), fontSize = 11.sp)
+            }
+            Text("★ $score", color = Color(0xFF123D2B), fontWeight = FontWeight.Bold)
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(game.description, color = Color(0xFF718278), fontSize = 12.sp)
+                Text(message, color = Color(0xFF123D2B), fontWeight = FontWeight.SemiBold)
+                when (index) {
+                    0 -> {
+                        Text(if (playerTurn) "Your turn · X" else "Computer · O", fontWeight = FontWeight.Bold)
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                for (col in 0..2) {
+                                    val cell = row * 3 + col
+                                    Button(onClick = {
+                                        if (board[cell].isEmpty() && playerTurn) {
+                                            val next = board.toMutableList(); next[cell] = "X"
+                                            val free = next.indices.filter { next[it].isEmpty() }
+                                            if (free.isNotEmpty()) next[free.random()] = "O"
+                                            board = next
+                                            score += 1
+                                            playerTurn = true
+                                            message = if (next.none { it.isEmpty() }) "Board full — start another round!" else "Your move!"
+                                        }
+                                    }, modifier = Modifier.size(76.dp), contentPadding = PaddingValues(0.dp)) { Text(board[cell].ifEmpty { " " }, fontSize = 25.sp) }
+                                }
+                            }
+                        }
+                        TextButton(onClick = { board = List(9) { "" }; message = "New board. You are X." }) { Text("New round") }
+                    }
+                    1 -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("Rock","Paper","Scissors").forEach { pick ->
+                                Button(onClick = {
+                                    val cpu = listOf("Rock","Paper","Scissors").random()
+                                    choice = pick
+                                    message = when {
+                                        pick == cpu -> "Draw! Device picked $cpu."
+                                        (pick == "Rock" && cpu == "Scissors") || (pick == "Paper" && cpu == "Rock") || (pick == "Scissors" && cpu == "Paper") -> { score++; "You win! Device picked $cpu." }
+                                        else -> "Device wins with $cpu."
+                                    }
+                                }) { Text(pick) }
+                            }
+                        }
+                    }
+                    2 -> {
+                        Text("Guess 1–100 · Attempts: $attempts", color = Color(0xFF123D2B))
+                        OutlinedTextField(input, { input = it.filter(Char::isDigit).take(3) }, label = { Text("Your guess") }, singleLine = true)
+                        Button(onClick = {
+                            val guess = input.toIntOrNull()
+                            if (guess != null) { attempts++; message = when { guess == target -> { score += 5; "Correct! New number generated."; target = Random.nextInt(1,101); attempts = 0; "Correct! +5 points. Try a new number." }; guess < target -> "Too low — try higher."; else -> "Too high — try lower." } }
+                        }) { Text("Check guess") }
+                    }
+                    3 -> {
+                        val a = (2..20).random(); val b = (2..12).random()
+                        Text("$a × $b = ?", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        OutlinedTextField(input, { input = it.filter(Char::isDigit) }, label = { Text("Answer") }, singleLine = true)
+                        Button(onClick = { if (input.toIntOrNull() == a*b) { score++; message = "Correct! +1"; input = "" } else message = "Not quite. Try another one." }) { Text("Submit") }
+                    }
+                    4 -> {
+                        Text("Find both matching symbols", fontSize = 13.sp)
+                        for (row in 0..1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (col in 0..3) {
+                                val cell = row*4+col
+                                Button(onClick = {
+                                    if (cell !in matched) {
+                                        revealed = revealed + cell
+                                        if (revealed.size >= 2) {
+                                            val pair = revealed.toList().takeLast(2)
+                                            if (memory[pair[0]] == memory[pair[1]]) { matched = matched + pair; score++ }
+                                            else scope.launch { delay(650); revealed = emptySet() }
+                                            if (memory[pair[0]] == memory[pair[1]]) revealed = emptySet()
+                                        }
+                                    }
+                                }, modifier = Modifier.size(62.dp), contentPadding = PaddingValues(0.dp)) {
+                                    Text(if (cell in matched || cell in revealed) memory[cell] else "?", fontSize = 20.sp)
+                                }
+                            }
+                        }
+                        TextButton(onClick = { memory = listOf("🍀","⭐","🍋","🌙","🍀","⭐","🍋","🌙").shuffled(); revealed = emptySet(); matched = emptySet(); score = 0 }) { Text("Restart") }
+                    }
+                    5 -> {
+                        Text("$tapCount / 25 taps", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        Button(onClick = { if (!running) { running = true; tapCount = 0; seconds = 15; scope.launch { while (seconds > 0 && running) { delay(1000); seconds-- }; running = false; message = "Time! You tapped $tapCount times." } } else { tapCount++; if (tapCount >= 25) { score += 3; running = false; message = "Target reached! +3 points." } } }, modifier = Modifier.size(150.dp), shape = RoundedCornerShape(80.dp)) { Text(if (running) "TAP!" else "START", fontSize = 25.sp) }
+                        Text("$seconds seconds left")
+                    }
+                    6 -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        listOf("Heads","Tails").forEach { pick -> Button(onClick = { val flip = listOf("Heads","Tails").random(); message = "It landed $flip."; if (pick == flip) score++ }) { Text(pick) } }
+                    }
+                    7 -> Button(onClick = { val you = (1..6).random(); val cpu = (1..6).random(); message = "You rolled $you · Device rolled $cpu"; if (you > cpu) score++ }) { Text("Roll dice") }
+                    8 -> {
+                        Text("Current number: $number", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Higher","Lower").forEach { pick -> Button(onClick = { val next = Random.nextInt(1,14); val won = if (pick=="Higher") next > number else next < number; message = "Next was $next · " + if (won) "Correct!" else "Not this time."; if (won) score++; number = next }) { Text(pick) } }
+                        }
+                    }
+                    9 -> {
+                        val scrambled = remember(index) { word.toList().shuffled().joinToString("") }
+                        Text(scrambled, fontSize = 27.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
+                        OutlinedTextField(input, { input = it.uppercase() }, label = { Text("Unscrambled word") }, singleLine = true)
+                        Button(onClick = { if (input.trim() == word) { score += 2; message = "Correct! +2 points."; word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); input = "" } else message = "Keep trying!" }) { Text("Check word") }
+                    }
+                    10 -> {
+                        Text(word.map { if (it in letterSet) "$it " else "_ " }.joinToString(""), fontSize = 24.sp, letterSpacing = 2.sp)
+                        Text("Wrong guesses: ${letterSet.count { it !in word }} / 6")
+                        for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            for (col in 0..8) {
+                                val ch = ('A'.code + row*9+col).toChar()
+                                if (ch <= 'Z') TextButton(onClick = { letterSet = letterSet + ch; if (ch in word) score++ }) { Text(ch.toString()) }
+                            }
+                        }
+                        TextButton(onClick = { word = listOf("PLANET","GARDEN","POCKET","ORANGE","STREAM").random(); letterSet = emptySet() }) { Text("New word") }
+                    }
+                    11 -> {
+                        Text("Tap the color: $colorName", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        listOf("RED","BLUE","GREEN","YELLOW").forEach { c -> Button(onClick = { if (c == colorName) { score++; message = "Correct!"; colorName = listOf("RED","BLUE","GREEN","YELLOW").random() } else message = "Try again." }) { Text(c) } }
+                    }
+                    12 -> {
+                        Button(onClick = {
+                            if (!reactionStarted) {
+                                reactionStarted = true; reactionReady = false; message = "Wait for green…"
+                                scope.launch { delay(Random.nextLong(1500,4500)); reactionReady = true; reactionMillis = System.currentTimeMillis(); message = "TAP NOW!" }
+                            } else if (reactionReady) {
+                                val ms = System.currentTimeMillis()-reactionMillis; score += if (ms < 350) 2 else 1
+                                message = "Your reaction: $ms ms"; reactionStarted = false; reactionReady = false
+                            } else message = "Too early! Try again."
+                        }, modifier = Modifier.fillMaxWidth().height(90.dp)) { Text(if (reactionReady) "TAP NOW!" else if (reactionStarted) "WAIT…" else "START TEST", fontSize = 23.sp) }
+                    }
+                    13 -> {
+                        Text(sequence.chunked(1).joinToString("  "), fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        Text("Memorize it, then type it below.")
+                        OutlinedTextField(input, { input = it.filter(Char::isDigit).take(8) }, label = { Text("Sequence") }, singleLine = true)
+                        Button(onClick = { if (input == sequence) { score += 3; message = "Perfect memory!"; sequence = List(4) { Random.nextInt(1,5) }.joinToString(""); input = "" } else message = "Not quite. Try again." }) { Text("Check sequence") }
+                    }
+                    14 -> {
+                        for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            for (col in 0..2) {
+                                val cell = row*3+col
+                                Button(onClick = { lights = lights.mapIndexed { i,v -> if (i==cell || i==cell-1 && cell%3>0 || i==cell+1 && cell%3<2 || i==cell-3 || i==cell+3) !v else v }; if (lights.none { it }) { score += 5; message = "All lights out! +5"; lights = List(9) { Random.nextBoolean() } } }, modifier = Modifier.size(70.dp)) { Text(if (lights[cell]) "💡" else " ", fontSize = 22.sp) }
+                            }
+                        }
+                        Text("Tap a light to toggle it and its neighbors.")
+                    }
+                    15 -> {
+                        Text("Reach 2048 by combining equal tiles.", fontSize = 12.sp)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            for (row in 0..3) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                for (col in 0..3) {
+                                    val v = if ((row*4+col) == 0) 2 else 0
+                                    Box(Modifier.size(58.dp).background(Color(0xFFE8F6EE), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { Text(if (v>0) v.toString() else "·", fontWeight = FontWeight.Bold) }
+                                }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("↑","↓","←","→").forEach { Button(onClick = { score++; message = "Move $it · Keep combining tiles!" }) { Text(it) } }
+                        }
+                    }
+                    16 -> {
+                        Text(if (playerTurn) "Your turn · Red" else "Device · Yellow")
+                        for (row in 0..5) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            for (col in 0..6) {
+                                val cell = row*7+col
+                                Box(Modifier.size(35.dp).background(when(fourBoard[cell]) { 1 -> Color(0xFFE34D4D); 2 -> Color(0xFFE6B83F); else -> Color(0xFFE8F6EE) }, RoundedCornerShape(50.dp)).clickable {
+                                    val next = fourBoard.toMutableList()
+                                    val landing = (5 downTo 0).map { it*7+col }.firstOrNull { next[it]==0 }
+                                    if (landing != null) { next[landing] = if(playerTurn) 1 else 2; fourBoard = next; playerTurn = !playerTurn; if(playerTurn) score++ }
+                                })
+                            }
+                        }
+                        TextButton(onClick = { fourBoard = List(42){0}; playerTurn = true }) { Text("Restart") }
+                    }
+                    17 -> {
+                        Text("Tap tiles. Avoid 4 hidden mines.")
+                        for (row in 0..4) Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            for (col in 0..4) {
+                                val cell=row*5+col
+                                Button(onClick = { opened = opened + cell; if(cell in mines) { message = "Boom! New board."; mines = (0 until 25).shuffled().take(4).toSet(); opened = emptySet() } else { score++; if(opened.size>=20) message = "Board cleared!" } }, modifier = Modifier.size(47.dp), contentPadding = PaddingValues(0.dp)) { Text(if(cell in opened) if(cell in mines) "💣" else "✓" else "?") }
+                            }
+                        }
+                    }
+                    18 -> {
+                        Text("Fill each blank with the missing number.")
+                        for (row in 0..3) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            for (col in 0..3) {
+                                val cell=row*4+col
+                                if (cell in listOf(2,7,8,13)) {
+                                    OutlinedTextField(sudokuInput[cell], { v -> sudokuInput = sudokuInput.toMutableList().also { it[cell]=v.filter(Char::isDigit).take(1) } }, modifier=Modifier.width(62.dp), singleLine=true)
+                                } else Box(Modifier.size(62.dp).background(Color(0xFFE8F6EE), RoundedCornerShape(8.dp)), contentAlignment=Alignment.Center) { Text(sudoku[cell].toString(), fontWeight=FontWeight.Bold) }
+                            }
+                        }
+                        Button(onClick = { val ok = listOf(2,7,8,13).all { sudokuInput[it].toIntOrNull()==sudoku[it] }; if(ok) { score+=5; message="Solved! +5 points." } else message="Check the missing cells." }) { Text("Check puzzle") }
+                    }
+                    19 -> {
+                        Text("Find the green target!")
+                        for (row in 0..2) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            for (col in 0..2) {
+                                val cell=row*3+col
+                                Button(onClick = { if(cell==mole) { score++; message="Nice hit!"; mole=Random.nextInt(0,9) } else message="Missed — try again." }, modifier=Modifier.size(72.dp)) { Text(if(cell==mole) "🐹" else "·", fontSize=22.sp) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
