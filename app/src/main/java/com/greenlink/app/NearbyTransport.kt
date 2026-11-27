@@ -259,11 +259,12 @@ class NearbyTransport(
             input.release(); recording.set(false); onStatus("Microphone could not start"); return false
         }
         recorder = input
+        val inputEffects = VoiceInputEffects(input.audioSessionId)
         val recorded = ByteArrayOutputStream()
         val liveTargets = connected.toList()
         sendFrameTo(liveTargets, 0x01)
         thread(name = "GreenCallNearbyMic") {
-            val buffer = ByteArray(4096)
+            val buffer = ByteArray(1024)
             var sentBytes = 0
             while (recording.get() && sentBytes < 800000) {
                 val count = input.read(buffer, 0, minOf(buffer.size, 800000 - sentBytes))
@@ -275,6 +276,7 @@ class NearbyTransport(
             }
             runCatching { input.stop() }
             input.release()
+            inputEffects.close()
             if (recorder === input) recorder = null
             recording.set(false)
             sendFrameTo(liveTargets, 0x03)
