@@ -129,6 +129,7 @@ class WalkieTalkieController(
         }
         synchronized(audioBytes) { audioBytes.reset() }
         recorder = input
+        val inputEffects = VoiceInputEffects(input.audioSessionId)
         startedAt = System.currentTimeMillis()
         liveStream = socket?.connected() == true
         if (liveStream) socket?.emit("voice:start", JSONObject().put("conversationId", conversationId))
@@ -143,7 +144,7 @@ class WalkieTalkieController(
             return false
         }
         thread(name = "GreenCallMic") {
-            val buffer = ByteArray(4096)
+            val buffer = ByteArray(1024)
             while (recording.get()) {
                 val count = input.read(buffer, 0, buffer.size)
                 if (count > 0) {
@@ -162,6 +163,7 @@ class WalkieTalkieController(
             }
             runCatching { input.stop() }
             input.release()
+            inputEffects.close()
             if (recorder === input) recorder = null
         }
         onStatus("You're talking…")
